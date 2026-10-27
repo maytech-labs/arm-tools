@@ -193,6 +193,22 @@ Through a `ptr<i32>`, loads and stores move 4 bytes, offsets are multiples of 4,
 
 Default level: warning.
 
+### `types/format`
+
+printf arguments that don't match the format string
+
+At a call to printf, fprintf, sprintf, snprintf, or dprintf, the format string is read from the data it points to, and each conversion is checked against its argument: `%d` wants an integer, `%f` a double, `%s` a pointer. On Darwin variadic arguments go on the stack, 8 bytes each, not in x1 and up; on Linux they go in registers. See docs/types.md.
+
+```asm
+    adrp    x0, fmt@PAGE
+    add     x0, x0, fmt@PAGEOFF
+    mov     x1, #42         ; on Darwin, this goes at [sp]
+    bl      _printf
+fmt: .asciz "%ld\n"
+```
+
+Default level: warning.
+
 ### `types/pointer-width`
 
 A pointer read through a 32-bit W register

@@ -277,6 +277,9 @@ enum Flags {
 struct State {
     types: Types,
     flags: Option<Flags>,
+    /// Registers holding a label's address (`adr`, or `adrp` and its low
+    /// 12 bits), or its page (`adrp` alone, marked with a leading `@`).
+    addresses: HashMap<String, String>,
 }
 
 impl State {
@@ -290,6 +293,12 @@ impl State {
                 .map(|(r, t)| (r.clone(), t.clone()))
                 .collect(),
             flags: (self.flags == other.flags).then_some(self.flags).flatten(),
+            addresses: self
+                .addresses
+                .iter()
+                .filter(|(r, l)| other.addresses.get(*r) == Some(l))
+                .map(|(r, l)| (r.clone(), l.clone()))
+                .collect(),
         }
     }
 }
@@ -398,7 +407,11 @@ fn condition(insn: &Instruction) -> Option<String> {
 fn fits(expected: &Ty, actual: &Ty) -> bool {
     match (expected, actual) {
         (Ty::Ptr(None), Ty::Ptr(_)) | (Ty::Ptr(_), Ty::Ptr(None)) => true,
-        (Ty::Ptr(Some(a)), Ty::Ptr(Some(b))) => a == b,
+        // `char *` and `unsigned char *` alike: same-width integers.
+        (Ty::Ptr(Some(a)), Ty::Ptr(Some(b))) => {
+            a == b
+                || matches!((&**a, &**b), (Ty::Int { bits: x, .. }, Ty::Int { bits: y, .. }) if x == y)
+        }
         (Ty::Int { bits: want, .. }, Ty::Int { signed, bits }) => {
             // A narrower signed value needs sxtw first; an unsigned one is
             // already zero-extended by the W write that made it.
@@ -428,6 +441,9 @@ struct Checker<'a> {
     /// Instruction index to register types asserted after it, and before it.
     after: HashMap<usize, Vec<(String, Ty)>>,
     before: HashMap<usize, Vec<(String, Ty)>>,
+    /// The inferred state before each instruction of the function being
+    /// checked, for looking back from a call.
+    states: std::cell::RefCell<HashMap<usize, State>>,
 }
 
 impl Checker<'_> {
@@ -588,6 +604,47 @@ impl Checker<'_> {
         } else if flow::is_call(insn) {
             out.flags = None;
         }
+        // Label addresses, for format strings.
+        for register in &written {
+            out.addresses.remove(register);
+        }
+        if flow::is_call(insn) {
+            out.addresses.retain(|r, _| !caller_saved(r));
+        }
+        let symbol = |o: &Operand| match o {
+            Operand::Imm(Imm::Symbol {
+                name,
+                variant,
+                specifier,
+                ..
+            }) => Some((name.clone(), variant.clone(), specifier.clone())),
+            Operand::Ident(name) => Some((name.clone(), None, None)),
+            _ => None,
+        };
+        if let (Some(id), Some((name, variant, specifier))) =
+            (&dest_id, ops.get(1).and_then(symbol))
+        {
+            match (head, variant.as_deref(), specifier.as_deref()) {
+                ("adr", None, None) => {
+                    out.addresses.insert(id.clone(), name);
+                }
+                ("adrp", Some("page") | None, None) => {
+                    out.addresses.insert(id.clone(), format!("@{name}"));
+                }
+                _ => {}
+            }
+        }
+        if head == "add"
+            && let (Some(id), Some(base), Some((name, variant, specifier))) = (
+                &dest_id,
+                ops.get(1).and_then(register_id),
+                ops.get(2).and_then(symbol),
+            )
+            && (variant.as_deref() == Some("pageoff") || specifier.as_deref() == Some("lo12"))
+            && state.addresses.get(&base) == Some(&format!("@{name}"))
+        {
+            out.addresses.insert(id.clone(), name);
+        }
         for (register, ty) in self.after.get(&i).into_iter().flatten() {
             out.types.insert(register.clone(), ty.clone());
         }
@@ -636,9 +693,15 @@ impl Checker<'_> {
                 .iter()
                 .position(|o| matches!(o, Operand::Token(t) if t == "["))
                 .map_or(insn.range.clone(), |p| at(p + 1));
+            // SIMD and FP registers load several elements at once.
+            let vector = matches!(
+                ops.first(),
+                Some(Operand::Register(r)) if matches!(r.register.llvm_name().as_bytes().first(), Some(b'Q' | b'D' | b'S' | b'H' | b'B'))
+            );
             match state.types.get(&base) {
                 Some(Ty::Ptr(Some(pointee))) => {
-                    if pointee.size() != size {
+                    let whole = vector && size % pointee.size() == 0;
+                    if pointee.size() != size && !whole {
                         out.push(finding(
                             "types/memory",
                             insn.range.clone(),
@@ -740,6 +803,9 @@ impl Checker<'_> {
                 }
             }
         }
+        if head == "bl" {
+            self.check_format(i, state, out);
+        }
         // Calls against the callee's signature.
         if head == "bl"
             && let Some(callee) = self.callee(insn)
@@ -784,6 +850,203 @@ impl Checker<'_> {
         }
     }
 
+    /// A printf-family call against its format string.
+    fn check_format(&self, i: usize, state: &State, out: &mut Vec<Finding>) {
+        let insn = self.cfg.insns[i];
+        let Some(callee) = self.callee(insn) else {
+            return;
+        };
+        let darwin = self.analysis.platform() == arm_isa::Platform::Darwin;
+        let base = callee
+            .name
+            .strip_prefix('_')
+            .filter(|_| darwin)
+            .unwrap_or(&callee.name);
+        let format_register = match base {
+            "printf" => 0,
+            "fprintf" | "sprintf" | "dprintf" => 1,
+            "snprintf" => 2,
+            _ => return,
+        };
+        let Some(label) = state.addresses.get(&format!("x{format_register}")) else {
+            return;
+        };
+        let Some(format) = string_at(self.analysis, label) else {
+            return;
+        };
+        let wanted = conversions(&format);
+        let shown = format.escape_debug().to_string();
+        if darwin {
+            // Variadic arguments go on the stack, 8 bytes each.
+            let slots = self.stack_slots(i, state);
+            if !wanted.is_empty() && slots.is_empty() {
+                let in_registers = (format_register + 1..8)
+                    .any(|n| self.written_before(i, &format!("x{n}")))
+                    || (0..8).any(|n| self.written_before(i, &format!("v{n}")));
+                if in_registers {
+                    out.push(finding(
+                        "types/format",
+                        insn.range.clone(),
+                        format!(
+                            "\"{shown}\" takes {} argument{}, which on Darwin go on the stack, not in registers: store them at [sp], [sp, #8], and on",
+                            wanted.len(),
+                            if wanted.len() == 1 { "" } else { "s" }
+                        ),
+                    ));
+                }
+                return;
+            }
+            for (k, kind) in wanted.iter().enumerate() {
+                match slots.get(&(k as i64 * 8)) {
+                    Some(Some(actual)) if !kind.accepts(actual) => out.push(finding(
+                        "types/format",
+                        insn.range.clone(),
+                        format!(
+                            "\"{shown}\" wants {} for argument {}, but [sp, #{}] holds {actual}",
+                            kind.describe(),
+                            k + 1,
+                            k * 8
+                        ),
+                    )),
+                    None if !slots.is_empty() => {
+                        out.push(finding(
+                            "types/format",
+                            insn.range.clone(),
+                            format!(
+                                "\"{shown}\" takes {} argument{}, but nothing is stored at [sp, #{}] for argument {}",
+                                wanted.len(),
+                                if wanted.len() == 1 { "" } else { "s" },
+                                k * 8,
+                                k + 1
+                            ),
+                        ));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+        // Linux: integers and pointers in the next x registers, floats in v.
+        let (mut next_x, mut next_v) = (format_register + 1, 0);
+        for (k, kind) in wanted.iter().enumerate() {
+            let register = if matches!(kind, Conversion::Float) {
+                next_v += 1;
+                format!("v{}", next_v - 1)
+            } else {
+                next_x += 1;
+                format!("x{}", next_x - 1)
+            };
+            if next_x > 8 || next_v > 8 {
+                break;
+            }
+            if let Some(actual) = state.types.get(&register)
+                && !kind.accepts(actual)
+            {
+                out.push(finding(
+                    "types/format",
+                    insn.range.clone(),
+                    format!(
+                        "\"{shown}\" wants {} for argument {}, in {register}, but {register} holds {actual}",
+                        kind.describe(),
+                        k + 1
+                    ),
+                ));
+            }
+        }
+    }
+
+    /// Whether a register is written in the straight-line code before
+    /// instruction `i`.
+    fn written_before(&self, i: usize, register: &str) -> bool {
+        self.block_before(i).iter().any(|&j| {
+            flow::writes(self.cfg.insns[j])
+                .iter()
+                .any(|r| r == register)
+        })
+    }
+
+    /// The instructions before `i` that surely run just before it, nearest
+    /// first: back to a label, a branch, or a call, at most 24.
+    fn block_before(&self, i: usize) -> Vec<usize> {
+        let text = self.analysis.text();
+        let insns = &self.cfg.insns;
+        let mut out = Vec::new();
+        let mut j = i;
+        while j > 0 && out.len() < 24 {
+            let prev = j - 1;
+            let between = text
+                .get(insns[prev].range.end..insns[j].range.start)
+                .unwrap_or("");
+            let labeled = between.lines().any(|l| {
+                l.split_whitespace()
+                    .next()
+                    .is_some_and(|w| w.ends_with(':'))
+            });
+            let insn = insns[prev];
+            let jumps = flow::is_call(insn)
+                || flow::is_terminator(insn)
+                || insn.mnemonic.condition.is_some()
+                || matches!(insn.mnemonic.head.as_str(), "cbz" | "cbnz" | "tbz" | "tbnz");
+            if labeled || jumps {
+                break;
+            }
+            out.push(prev);
+            j = prev;
+        }
+        out
+    }
+
+    /// Stores to the stack in the straight-line code before a call, by
+    /// their offset from sp at the call, with the stored value's type when
+    /// known. Follows sp as it moves: `str w1, [sp, #-32]!` makes room and
+    /// stores the first argument at once.
+    fn stack_slots(&self, i: usize, _state: &State) -> HashMap<i64, Option<Ty>> {
+        let mut slots = HashMap::new();
+        // How far sp moves between the instruction and the call.
+        let mut below = 0i64;
+        for j in self.block_before(i) {
+            let insn = self.cfg.insns[j];
+            let change = match flow::sp_change(insn) {
+                flow::SpChange::By(n) => n,
+                flow::SpChange::None => 0,
+                // sp set some other way: nothing before it can be placed.
+                _ => break,
+            };
+            let ops = flow::operands(insn);
+            if insn.mnemonic.head.starts_with("st") && memory_base(ops).as_deref() == Some("sp") {
+                let offset = memory_offset(ops).unwrap_or(0);
+                let pre = ops
+                    .iter()
+                    .any(|o| matches!(o, Operand::Token(t) if t == "!"));
+                // A post-indexed store writes at sp before it moves; plain
+                // and pre-indexed ones at sp plus the offset.
+                let post = change != 0 && !pre;
+                let at = if post { 0 } else { offset } - change - below;
+                let pair = insn.mnemonic.head == "stp";
+                let size = i64::from(access_size(insn).unwrap_or(8)).max(8);
+                let types_before = self.types_before(j);
+                for (n, operand) in ops.iter().take(if pair { 2 } else { 1 }).enumerate() {
+                    let slot = at + n as i64 * size;
+                    // The frame record (x29 and x30) is never an argument.
+                    let frame = matches!(register_id(operand).as_deref(), Some("x29" | "x30"));
+                    if slot >= 0 && !frame {
+                        let ty = types_before.as_ref().and_then(|t| operand_type(t, operand));
+                        slots.entry(slot).or_insert(ty);
+                    }
+                }
+            }
+            below += change;
+        }
+        slots
+    }
+
+    /// Register types before instruction `j`, as the latest inference left
+    /// them. Filled in during checking.
+    fn types_before(&self, j: usize) -> Option<Types> {
+        self.states.borrow().get(&j).map(|s| s.types.clone())
+    }
+
     fn line(&self, offset: usize) -> u32 {
         self.analysis
             .line_index()
@@ -791,6 +1054,99 @@ impl Checker<'_> {
             .line
             + 1
     }
+}
+
+/// What a printf conversion wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Conversion {
+    Int,
+    Float,
+    /// `%s`, `%p`, `%n`.
+    Pointer,
+}
+
+impl Conversion {
+    fn accepts(self, ty: &Ty) -> bool {
+        matches!(
+            (self, ty),
+            (Conversion::Int, Ty::Int { .. })
+                | (Conversion::Float, Ty::Float { bits: 64 })
+                | (Conversion::Pointer, Ty::Ptr(_))
+        )
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            Conversion::Int => "an integer",
+            Conversion::Float => "a double",
+            Conversion::Pointer => "a pointer",
+        }
+    }
+}
+
+/// The arguments a printf format string takes, in order: `%*d` takes two.
+fn conversions(format: &str) -> Vec<Conversion> {
+    let mut out = Vec::new();
+    let mut chars = format.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            continue;
+        }
+        if chars.peek() == Some(&'%') {
+            chars.next();
+            continue;
+        }
+        // Flags, width, precision, and length, then the conversion.
+        while let Some(&c) = chars.peek() {
+            if c == '*' {
+                out.push(Conversion::Int);
+                chars.next();
+            } else if "-+ #0123456789.hljztqL'".contains(c) {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        match chars.next() {
+            Some('d' | 'i' | 'u' | 'x' | 'X' | 'o' | 'c' | 'b') => out.push(Conversion::Int),
+            Some('f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'a' | 'A') => out.push(Conversion::Float),
+            Some('s' | 'p' | 'n') => out.push(Conversion::Pointer),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The text of the string a label marks, from `.asciz`, `.string`, or
+/// `.ascii` right after it, with C escapes decoded.
+fn string_at(analysis: &Analysis, label: &str) -> Option<String> {
+    let symbol = analysis
+        .symbols()
+        .iter()
+        .find(|s| s.name == label && s.kind == arm_sema::SymbolKind::Label && s.origin.is_none())?;
+    let after = analysis.text().get(symbol.range.end..)?;
+    let after = after.strip_prefix(':').unwrap_or(after);
+    let directive = after.split_whitespace().next()?.to_ascii_lowercase();
+    if !matches!(directive.as_str(), ".asciz" | ".string" | ".ascii") {
+        return None;
+    }
+    let open = after.find('"')?;
+    let mut out = String::new();
+    let mut chars = after[open + 1..].chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(out),
+            '\\' => match chars.next()? {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                '0' => out.push('\0'),
+                other => out.push(other),
+            },
+            '\n' => return None,
+            c => out.push(c),
+        }
+    }
+    None
 }
 
 fn float_of(dest: Option<&Operand>) -> Option<Ty> {
@@ -841,8 +1197,13 @@ fn finding(rule: &'static str, range: Range<usize>, message: String) -> Finding 
 
 /// Infers types through every function and checks them. Malformed
 /// annotations are findings too.
-pub(crate) fn run(analysis: &Analysis, cfg: &Cfg, out: &mut Vec<Finding>) {
-    let annotations = annotations(analysis);
+pub(crate) fn run(
+    analysis: &Analysis,
+    cfg: &Cfg,
+    externals: &HashMap<String, Signature>,
+    out: &mut Vec<Finding>,
+) {
+    let mut annotations = annotations(analysis);
     for (range, error) in &annotations.errors {
         out.push(finding(
             "types/annotation",
@@ -850,8 +1211,13 @@ pub(crate) fn run(analysis: &Analysis, cfg: &Cfg, out: &mut Vec<Finding>) {
             format!("this type annotation can't be read: {error}"),
         ));
     }
-    if annotations.signatures.is_empty() && annotations.registers.is_empty() {
-        return;
+    // Calls to C functions are checked even without annotations; what the
+    // file says wins.
+    for (name, signature) in externals {
+        annotations
+            .signatures
+            .entry(name.clone())
+            .or_insert_with(|| signature.clone());
     }
     let checker = Checker::new(analysis, cfg, &annotations);
     for function in &cfg.functions {
@@ -862,6 +1228,7 @@ pub(crate) fn run(analysis: &Analysis, cfg: &Cfg, out: &mut Vec<Finding>) {
         let states = infer(&checker, entry, entry_state(signature));
         let mut indices: Vec<usize> = states.keys().copied().collect();
         indices.sort_unstable();
+        *checker.states.borrow_mut() = states.clone();
         for i in indices {
             checker.check(i, &states[&i], signature, out);
         }
@@ -912,6 +1279,7 @@ impl<'a> Checker<'a> {
             annotations,
             after,
             before,
+            states: std::cell::RefCell::new(HashMap::new()),
         }
     }
 }
@@ -1199,6 +1567,128 @@ _f:
             ],
             "{found:?}"
         );
+    }
+
+    #[test]
+    fn printf_formats_on_darwin() {
+        let text = "\
+.globl _f
+_f:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+    adrp    x0, fmt@PAGE
+    add     x0, x0, fmt@PAGEOFF
+    mov     x1, #42
+    bl      _printf
+    sub     sp, sp, #16
+    mov     x9, #42
+    str     x9, [sp]
+    adrp    x0, fmt@PAGE
+    add     x0, x0, fmt@PAGEOFF
+    bl      _printf
+    adrp    x0, two@PAGE
+    add     x0, x0, two@PAGEOFF
+    str     x9, [sp]
+    bl      _printf
+    add     sp, sp, #16
+    ldp     x29, x30, [sp], #16
+    ret
+fmt:    .asciz \"%ld\\n\"
+two:    .asciz \"%ld and %s\\n\"
+";
+        let found: Vec<String> = lint(&Analysis::new(text), &Config::default())
+            .into_iter()
+            .filter(|d| d.code == "types/format")
+            .map(|d| d.message)
+            .collect();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(
+            found[0].contains("on Darwin go on the stack, not in registers"),
+            "{found:?}"
+        );
+        assert!(
+            found[1].contains("nothing is stored at [sp, #8] for argument 2"),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn printf_formats_on_linux() {
+        let text = "\
+// armtool: fn main(x0: i64, x1: ptr<ptr<i8>>) -> i32
+.globl main
+main:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+    mov     x19, x0
+    adrp    x0, fmt
+    add     x0, x0, :lo12:fmt
+    mov     x1, x19
+    mov     x2, x19
+    bl      printf
+    mov     w0, #0
+    ldp     x29, x30, [sp], #16
+    ret
+fmt:    .asciz \"%d args, first %s\\n\"
+";
+        let found: Vec<String> = lint(
+            &Analysis::for_platform(text, arm_isa::Platform::Linux),
+            &Config::default(),
+        )
+        .into_iter()
+        .filter(|d| d.code == "types/format")
+        .map(|d| d.message)
+        .collect();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].contains("wants a pointer for argument 2, in x2, but x2 holds i64"),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn darwin_slots_follow_sp() {
+        // hellosilicon's pattern: make room and store the first argument at once.
+        let text = "\
+.globl _f
+_f:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+    adrp    x0, fmt@PAGE
+    add     x0, x0, fmt@PAGEOFF
+    mov     w1, #1
+    mov     w2, #2
+    str     w1, [sp, #-16]!
+    str     w2, [sp, #8]
+    bl      _printf
+    add     sp, sp, #16
+    ldp     x29, x30, [sp], #16
+    ret
+fmt:    .asciz \"%d %d\\n\"
+";
+        assert_eq!(types(text), []);
+    }
+
+    #[test]
+    fn libc_calls_are_checked_without_annotations() {
+        // strlen takes a pointer; this passes the result of strlen, a u64.
+        let text = "_f:\n    bl _strlen\n    bl _strlen\n    ret\n.globl _f\n";
+        let found = types(text);
+        assert_eq!(
+            found,
+            [("types/call", "bl _strlen".to_string())],
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn format_parsing() {
+        use Conversion::*;
+        assert_eq!(
+            conversions("%d %5.2f %s %% %*d %lu %p %c"),
+            [Int, Float, Pointer, Int, Int, Int, Pointer, Int]
+        );
+        assert_eq!(conversions("100%%"), []);
     }
 
     #[test]

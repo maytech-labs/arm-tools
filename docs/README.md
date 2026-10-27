@@ -48,3 +48,4 @@
 - [0037 Checking the aliases clang handles in C++](decisions/0037-cpp-aliases.md)
 - [0038 AArch64 Linux as a second platform](decisions/0038-linux.md)
 - [0039 Gradual types from comment annotations](decisions/0039-types.md)
+- [0040 Signatures from C, and printf format strings](decisions/0040-c-signatures.md)

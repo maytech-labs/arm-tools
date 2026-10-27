@@ -221,6 +221,21 @@ impl Config {
         Ok(Config::default())
     }
 
+    /// The project a file belongs to: the config file's directory, or the
+    /// nearest one with `.git`.
+    pub fn project_root(&self, file: &Path) -> Option<PathBuf> {
+        self.path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf)
+            .or_else(|| {
+                file.parent()?
+                    .ancestors()
+                    .find(|d| d.join(".git").exists())
+                    .map(Path::to_path_buf)
+            })
+    }
+
     /// Where to look for a file's `.include`s, in order: the configured
     /// paths, the project root (the config file's directory, or the nearest
     /// one with `.git`), then the file's own directory.

@@ -3,6 +3,7 @@
 //! in `armls` as diagnostics and in `armtool lint` for CI.
 
 mod calls;
+mod cdecl;
 mod check;
 mod config;
 mod flow;
@@ -43,6 +44,16 @@ pub fn rule(id: &str) -> Option<&'static RuleInfo> {
 /// Runs every enabled rule on a file. Findings on a line with
 /// `; armtool: allow(rule-id)`, or right below one, are dropped.
 pub fn lint(analysis: &Analysis, config: &Config) -> Vec<Diagnostic> {
+    lint_with(analysis, config, &cdecl::libc(analysis.platform()))
+}
+
+/// Like [`lint`], with the signatures of functions defined elsewhere: the C
+/// library's and the project's C functions ([`check`] finds them).
+pub fn lint_with(
+    analysis: &Analysis,
+    config: &Config,
+    externals: &std::collections::HashMap<String, Signature>,
+) -> Vec<Diagnostic> {
     let allows = allow_comments(analysis);
     let line_of = |offset: usize| {
         analysis
@@ -51,7 +62,7 @@ pub fn lint(analysis: &Analysis, config: &Config) -> Vec<Diagnostic> {
             .line
     };
     let mut out = Vec::new();
-    for finding in rules::run(analysis) {
+    for finding in rules::run(analysis, externals) {
         let Some(info) = rule(finding.rule) else {
             continue;
         };

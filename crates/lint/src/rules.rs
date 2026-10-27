@@ -107,6 +107,12 @@ pub(crate) const RULES: &[RuleInfo] = &[
         explanation: "Through a `ptr<i32>`, loads and stores move 4 bytes, offsets are multiples of 4, and pointer arithmetic moves by whole elements. Loading 8 bytes through it reads past the value; an offset of 6 lands mid-element. Using a non-pointer as an address is a finding too. Types come from annotations; see docs/types.md.",
     },
     RuleInfo {
+        id: "types/format",
+        default_level: Level::Warning,
+        summary: "printf arguments that don't match the format string",
+        explanation: "At a call to printf, fprintf, sprintf, snprintf, or dprintf, the format string is read from the data it points to, and each conversion is checked against its argument: `%d` wants an integer, `%f` a double, `%s` a pointer. On Darwin variadic arguments go on the stack, 8 bytes each, not in x1 and up; on Linux they go in registers. See docs/types.md.",
+    },
+    RuleInfo {
         id: "types/pointer-width",
         default_level: Level::Warning,
         summary: "A pointer read through a 32-bit W register",
@@ -144,10 +150,13 @@ pub(crate) const RULES: &[RuleInfo] = &[
     },
 ];
 
-pub(crate) fn run(analysis: &Analysis) -> Vec<Finding> {
+pub(crate) fn run(
+    analysis: &Analysis,
+    externals: &HashMap<String, crate::types::Signature>,
+) -> Vec<Finding> {
     let cfg = Cfg::new(analysis);
     let mut out = Vec::new();
-    crate::types::run(analysis, &cfg, &mut out);
+    crate::types::run(analysis, &cfg, externals, &mut out);
     let darwin = analysis.platform() == Platform::Darwin;
     if darwin {
         x18(analysis, &mut out);

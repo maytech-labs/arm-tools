@@ -62,9 +62,9 @@ _clamp:
         mov     x0, #100
         ret                                 ; returns with the caller's x19 changed
 
-        .globl  _report
+        .globl  _status
         .p2align 2
-_report:
+_status:
         stp     x29, x30, [sp, #-16]!
         mov     x29, sp
         cmp     x0, #0

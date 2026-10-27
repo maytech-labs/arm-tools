@@ -48,6 +48,26 @@ From annotations, types follow the code through branches and loops:
 
 Nothing is reported about an unknown type, so a file without annotations gets no `types/` findings, and you can annotate one function at a time. Hover a register in the editor to see its type at that point.
 
+## Signatures from C
+
+You don't have to annotate functions written in C ([0040](decisions/0040-c-signatures.md)). Calls are checked against:
+
+- prototypes and definitions in the project's `.h`, `.c`, and `.m` files, where the project is the directory with `armtool.toml`, or the nearest one with `.git`;
+- about 40 common C library functions: printf and friends, the string and memory functions, malloc and free, and some math.
+
+`long area(long w, long h);` in a header becomes `_area(x0: i64, x1: i64) -> i64` (`area` on Linux). An annotation in the file wins over both.
+
+## printf
+
+At a call to printf, fprintf, sprintf, snprintf, or dprintf, if the format register holds the address of a string in the file (`adrp` and `@PAGEOFF` or `:lo12:`, or `adr`), each `%` conversion is checked against its argument. On Linux, arguments are in x1 and up (after the fixed arguments), and doubles in v0 and up. On Darwin, they're on the stack, 8 bytes each, and passing them in registers is the classic mistake:
+
+```asm
+        adrp    x0, fmt@PAGE
+        add     x0, x0, fmt@PAGEOFF
+        mov     x1, #42           ; types/format: on Darwin, store it at [sp]
+        bl      _printf
+```
+
 ## What's checked
 
 | Rule | Finds |
@@ -55,6 +75,7 @@ Nothing is reported about an unknown type, so a file without annotations gets no
 | `types/call` | Arguments that don't fit the callee's signature, and returns that don't fit the function's own |
 | `types/signedness` | `b.gt` and friends after comparing unsigned values, `b.hi` and friends after signed ones, `sdiv` and `udiv` on the wrong kind |
 | `types/memory` | Loads and stores of the wrong size for the pointee, offsets and pointer arithmetic that land mid-element, and non-pointers used as addresses |
+| `types/format` | printf arguments that don't match the format string |
 | `types/pointer-width` | A pointer read through a W register |
 | `types/annotation` | An annotation that can't be read |
 

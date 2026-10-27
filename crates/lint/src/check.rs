@@ -29,7 +29,7 @@ pub fn check(
     let features = Some(config.features_for(platform));
     let Some(path) = path else {
         let analysis = Analysis::with_platform(text, None, None, features, platform);
-        let diagnostics = findings(&analysis, config, lint);
+        let diagnostics = findings(&analysis, config, lint, path);
         return Checked {
             analysis,
             diagnostics,
@@ -48,7 +48,7 @@ pub fn check(
         platform,
     );
     if !arm_sema::needs_preprocessing(path) {
-        let diagnostics = findings(&analysis, config, lint);
+        let diagnostics = findings(&analysis, config, lint, Some(path));
         return Checked {
             analysis,
             diagnostics,
@@ -63,12 +63,12 @@ pub fn check(
                 features,
                 platform,
             );
-            preprocessed.map_diagnostics(text, findings(&output, config, lint))
+            preprocessed.map_diagnostics(text, findings(&output, config, lint, Some(path)))
         }
         Err(error) => {
             // Without the preprocessor, `#define`d names and `#if` blocks
             // can't be judged: report what's certain, and say why.
-            let mut found: Vec<Diagnostic> = findings(&analysis, config, lint)
+            let mut found: Vec<Diagnostic> = findings(&analysis, config, lint, Some(path))
                 .into_iter()
                 .filter(|d| d.code == "syntax")
                 .collect();
@@ -88,10 +88,21 @@ pub fn check(
     }
 }
 
-fn findings(analysis: &Analysis, config: &Config, lint: bool) -> Vec<Diagnostic> {
+fn findings(
+    analysis: &Analysis,
+    config: &Config,
+    lint: bool,
+    path: Option<&Path>,
+) -> Vec<Diagnostic> {
     let mut out = analysis.diagnostics().to_vec();
     if lint {
-        out.extend(crate::lint(analysis, config));
+        // The C library, then the project's own C functions over it.
+        let platform = analysis.platform();
+        let mut externals = crate::cdecl::libc(platform);
+        if let Some(root) = path.and_then(|p| config.project_root(p)) {
+            externals.extend(crate::cdecl::project(&root, platform));
+        }
+        out.extend(crate::lint_with(analysis, config, &externals));
     }
     out.sort_by_key(|d| (d.range.start, d.range.end));
     out
