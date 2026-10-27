@@ -274,6 +274,28 @@ const STORE_EXCLUSIVE: &[&str] = &[
 
 /// The registers an instruction writes, by `register_id`. Covers the
 /// destination operands and base register writeback.
+/// LSE atomics, which don't follow the destination-first pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Atomic {
+    /// `ldadd Rs, Rt, [Xn]` and `swp`: read Rs, write Rt.
+    LoadOp,
+    /// `cas Rs, Rt, [Xn]`: read both, write Rs. `casp` reads and writes pairs.
+    CompareAndSwap,
+}
+
+fn atomic(head: &str) -> Option<Atomic> {
+    const LOAD_OPS: &[&str] = &[
+        "ldadd", "ldclr", "ldeor", "ldset", "ldsmax", "ldsmin", "ldumax", "ldumin", "swp",
+    ];
+    if LOAD_OPS.iter().any(|op| head.starts_with(op)) {
+        Some(Atomic::LoadOp)
+    } else if head.starts_with("cas") {
+        Some(Atomic::CompareAndSwap)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn writes(insn: &Instruction) -> Vec<String> {
     let head = insn.mnemonic.head.as_str();
     let ops = operands(insn);
@@ -283,6 +305,18 @@ pub(crate) fn writes(insn: &Instruction) -> Vec<String> {
         .filter_map(register_id)
         .collect();
     let mut out = Vec::new();
+    match atomic(head) {
+        Some(Atomic::LoadOp) => {
+            out.extend(registers.get(1).cloned());
+            return out;
+        }
+        Some(Atomic::CompareAndSwap) => {
+            let pair = head.starts_with("casp");
+            out.extend(registers.iter().take(if pair { 2 } else { 1 }).cloned());
+            return out;
+        }
+        None => {}
+    }
     let is_store = head.starts_with("st") && !STORE_EXCLUSIVE.contains(&head);
     if STORE_EXCLUSIVE.contains(&head) {
         out.extend(registers.first().cloned());
@@ -316,6 +350,14 @@ pub(crate) fn reads(insn: &Instruction, platform: arm_isa::Platform) -> Vec<Stri
     let mut skipped = 0;
     let mut out = Vec::new();
     let mut in_memory = false;
+    // `ldadd Rs, Rt, [Xn]` reads Rs and Xn; cas reads everything.
+    let skip_second = atomic(head) == Some(Atomic::LoadOp);
+    let destinations = if atomic(head).is_some() {
+        0
+    } else {
+        destinations
+    };
+    let mut position = 0;
     for operand in ops {
         if let Operand::Token(t) = operand {
             in_memory |= t == "[";
@@ -324,6 +366,10 @@ pub(crate) fn reads(insn: &Instruction, platform: arm_isa::Platform) -> Vec<Stri
         let Some(id) = register_id(operand) else {
             continue;
         };
+        position += 1;
+        if skip_second && !in_memory && position == 2 {
+            continue;
+        }
         if !in_memory && skipped < destinations {
             skipped += 1;
             continue;

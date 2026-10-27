@@ -64,3 +64,5 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - SVE condition names (`b.none`, `csel ..., any`), labels named like shifts (`bl lsl`), and ELF specifiers on constants are no longer reported.
 - Lint on Linux: x18 and frame-pointer rules are Darwin only, `adrp` pairs with `:lo12:` and the GOT and TLS specifiers, and `svc #0` takes its number in x8.
 - armls on Linux: register hover, syscall names (x8, `svc #0`), snippets, completion and signatures in ELF syntax (`:lo12:`, bare `adrp` labels), and C functions under their unprefixed names.
+- Linux examples in examples/linux, built and run on an Arm Linux CI runner.
+- Lint: LSE atomics (`ldadd`, `swp`, `cas`) read and write the right registers, and a function that never returns, like `_start`, may change callee-saved registers.

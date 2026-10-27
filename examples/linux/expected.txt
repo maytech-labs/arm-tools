@@ -1,0 +1,4 @@
+Hello from Linux on Arm
+6 x 7 = 42
+counter = 42
+*****

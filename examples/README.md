@@ -32,3 +32,14 @@ Things these examples ran into while being written, which armls now explains:
 - A string without a zero byte (`.ascii`) in `__TEXT,__cstring` gets merged with its neighbors by the linker, garbling output. Strings with explicit lengths go in `__TEXT,__const`.
 
 The tests in `crates/cli/tests/examples.rs` keep these honest: the valid examples must lint clean and build and print what's expected, and `mistakes.s` must keep showing each problem it lists.
+
+## Linux
+
+[linux/](linux/) has programs for AArch64 Linux. Its `armtool.toml` sets `platform = "linux"`, so armls reads them with Linux's conventions: `;` separates statements, addresses use `:lo12:`, and system calls take their number in x8. Build and run them on an Arm Linux machine with `make -C linux run`; on a Mac, `make -C linux check` assembles them for Linux. CI runs them on GitHub's Arm Linux runner.
+
+| Program | Shows | Try in the editor |
+|---|---|---|
+| [hello](linux/hello.s) | Linux system calls with no C library: `write` and `exit` through `svc #0`, `_start` as the entry point | Inlay hints show `syscall write`; hover `x8` and `x18` for their roles on Linux |
+| [printf](linux/printf.s) | Calling `printf`: on Linux variadic arguments go in registers, unlike Darwin | Type `adrp x0, ` and completion offers labels without `@PAGE`; after `add x0, x0, ` it offers `:lo12:` |
+| [atomics](linux/atomics.s) | LSE atomics need `.arch armv8.1-a` on Linux, whose default CPU is generic Armv8-A | Delete the `.arch` line to see the error |
+| [count](linux/count.S) | A `.S` file preprocessed for Linux: `__linux__` is defined | The `#error` stays quiet; set `platform = "darwin"` in armtool.toml and it fires |

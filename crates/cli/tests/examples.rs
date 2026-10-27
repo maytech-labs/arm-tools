@@ -41,6 +41,7 @@ fn valid_examples_lint_clean() {
         "atomics",
         "c-interop",
         "echo",
+        "linux",
     ] {
         // A .S file needs clang's preprocessor (xcrun) to be checked in full;
         // elsewhere armtool only reports syntax, and macros read as errors.
@@ -115,5 +116,32 @@ fn oracle_examples_build_and_run() {
         "echoed through read and write",
     ] {
         assert!(out.contains(expected), "missing {expected:?} in:\n{out}");
+    }
+}
+
+/// The Linux examples assemble for Linux. (CI builds and runs them on an
+/// Arm Linux runner; see .github/workflows/ci.yml.)
+#[test]
+fn linux_examples_assemble_for_linux() {
+    if !cfg!(target_os = "macos") {
+        return eprintln!("skipped: needs xcrun clang");
+    }
+    for file in ["hello.s", "printf.s", "atomics.s", "count.S"] {
+        let output = Command::new("xcrun")
+            .args([
+                "clang",
+                "--target=aarch64-linux-gnu",
+                "-c",
+                "-o",
+                "/dev/null",
+            ])
+            .arg(examples().join("linux").join(file))
+            .output()
+            .expect("clang runs");
+        assert!(
+            output.status.success(),
+            "{file}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

@@ -33,3 +33,17 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo xtask check
+
+  linux-examples:
+    # The Linux examples, built with GCC and run on Arm Linux, then linted
+    # there, .S preprocessing included (docs/decisions/0038-linux.md).
+    name: linux examples (arm64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: "1.98.1"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: make -C examples/linux run > out.txt && diff out.txt examples/linux/expected.txt
+      - run: cargo run -q -p arm-cli --bin armtool -- lint examples/linux

@@ -320,6 +320,14 @@ fn is_callee_saved(register: &str) -> bool {
 }
 
 fn callee_saved(function: &Function, insns: &[&Instruction], out: &mut Vec<Finding>) {
+    // A function that never returns, like _start ending in the exit
+    // syscall, has no caller to preserve registers for.
+    let returns = insns
+        .iter()
+        .any(|i| matches!(i.mnemonic.head.as_str(), "ret" | "retaa" | "retab"));
+    if !returns {
+        return;
+    }
     let saved: HashSet<String> = insns.iter().flat_map(|i| flow::stored(i)).collect();
     let mut reported = HashSet::new();
     for insn in insns {
@@ -971,6 +979,13 @@ _main:
         // x8 read after a call is garbage; at entry it may be a result pointer.
         let entry = ".globl f\nf:\n  str x0, [x8]\n  ret\n";
         assert_eq!(linux(entry), []);
+        // A program entry that exits never returns: x19 is its own.
+        let start =
+            ".globl _start\n_start:\n  mov x19, #5\n  mov x0, x19\n  mov x8, #93\n  svc #0\n";
+        assert_eq!(linux(start), []);
+        // LSE atomics write their second register, not their first.
+        let lse = ".globl f\nf:\n  mov x10, #1\n  ldaddal x10, x11, [x0]\n  mov x0, x11\n  ret\n";
+        assert_eq!(rules(lse), Vec::<&str>::new());
     }
 
     #[test]
