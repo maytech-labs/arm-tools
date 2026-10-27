@@ -5,7 +5,7 @@
 # HEAD-only until the first release (docs/decisions/0025-distribution.md).
 class ArmTools < Formula
   desc "Language server, linter, and formatter for AArch64 assembly on macOS"
-  homepage "https://github.com/maytech-labs/arm-tools"
+  homepage "https://maytech-labs.github.io/arm-tools/"
   # REAL 1.0, which has no SPDX identifier, and Apache-2.0 WITH LLVM-exception
   # for the tables derived from LLVM (docs/decisions/0045-real-license.md).
   license :cannot_represent
