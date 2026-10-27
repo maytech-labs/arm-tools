@@ -58,3 +58,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - armls is faster on large files and projects: semantic tokens and lint no longer slow down quadratically, each edit is analyzed once, queued edits coalesce, and indexing uses every core.
 - Hover and completion say what about 270 common instructions do.
 - Operand checking, signature help, and completion for `ubfx`, `bfi`, `bfc` and the other bitfield aliases, `lsl` by an immediate, and `dc`, `ic`, `at`, and `tlbi`.
+- `cargo xtask nvim-smoke` checks completion, signature help, call hierarchy, inlay hints, document links, formatting, and rename across files in real Neovim.

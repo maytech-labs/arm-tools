@@ -73,9 +73,24 @@ fn nvim_smoke() -> ExitCode {
     }
     let dir = std::env::temp_dir().join(format!("arm-tools-nvim-{}", std::process::id()));
     let file = dir.join("smoke.s");
-    let source = "_main:\n    stp x29, x30, [sp, #-16]!\n    frob x0\n    b _main\n";
-    if let Err(error) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&file, source)) {
-        eprintln!("can't write {}: {error}", file.display());
+    // A small project: smoke.s includes defs.s and calls into util.s. The
+    // .git directory makes it the workspace root. Line numbers matter to
+    // editors/neovim/smoke.lua.
+    let files = [
+        (
+            "smoke.s",
+            ".include \"defs.s\"\n.globl _main\n_main:\n    stp x29, x30, [sp, #-16]!\n    frob x0\n    mov x0, #LIMIT\n    bl _helper\n    csel x0, x1, x2, eq\n    ldp x29, x30, [sp], #16\n    ret   \n\n; end\n",
+        ),
+        ("defs.s", "LIMIT = 4\n"),
+        ("util.s", ".globl _helper\n_helper:\n    ret\n"),
+    ];
+    let written = std::fs::create_dir_all(dir.join(".git")).and_then(|()| {
+        files
+            .iter()
+            .try_for_each(|(name, text)| std::fs::write(dir.join(name), text))
+    });
+    if let Err(error) = written {
+        eprintln!("can't write {}: {error}", dir.display());
         return ExitCode::FAILURE;
     }
     let armls = std::env::current_dir()
