@@ -1,0 +1,224 @@
+//! arm-sema's contract: what it defines, resolves, and reports, checked
+//! against clang where clang has an opinion (docs/decisions/0007-testing.md).
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use arm_sema::{Analysis, Severity, SymbolKind};
+
+fn files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "s") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    assert!(!out.is_empty(), "no .s files in {}", dir.display());
+    out
+}
+
+fn manifest() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn read(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// Whether clang accepts the file, or None off macOS.
+fn clang_accepts(path: &Path) -> Option<bool> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let object = std::env::temp_dir().join(format!("arm-sema-{}.o", std::process::id()));
+    let status = Command::new("xcrun")
+        .args(["clang", "-c", "-arch", "arm64", "-o"])
+        .arg(&object)
+        .arg(path)
+        .output()
+        .map(|o| o.status.success());
+    let _ = std::fs::remove_file(&object);
+    Some(status.unwrap_or_else(|e| panic!("xcrun: {e}")))
+}
+
+/// (code, text at the range) for each diagnostic.
+fn diagnostics(text: &str) -> Vec<(&'static str, String)> {
+    Analysis::new(text)
+        .diagnostics()
+        .iter()
+        .map(|d| (d.code, text[d.range.clone()].to_string()))
+        .collect()
+}
+
+#[test]
+fn valid_corpus_has_no_diagnostics() {
+    for path in files(&manifest().join("../syntax/tests/data/corpus")) {
+        let text = read(&path);
+        let analysis = Analysis::new(&text);
+        assert_eq!(analysis.diagnostics(), [], "{}", path.display());
+    }
+}
+
+#[test]
+fn invalid_cases_are_reported() {
+    for path in files(&manifest().join("tests/data/invalid")) {
+        let analysis = Analysis::new(&read(&path));
+        assert!(
+            analysis
+                .diagnostics()
+                .iter()
+                .any(|d| d.severity == Severity::Error),
+            "no error for {}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn oracle_clang_rejects_the_invalid_cases() {
+    for path in files(&manifest().join("tests/data/invalid")) {
+        match clang_accepts(&path) {
+            None => return eprintln!("skipped: the clang oracle runs only on macOS"),
+            Some(true) => panic!("clang accepts {}, so it isn't an error", path.display()),
+            Some(false) => {}
+        }
+    }
+}
+
+#[test]
+fn errors_point_at_the_problem() {
+    assert_eq!(
+        diagnostics("_f: nop\n_f: nop"),
+        [("duplicate-symbol", "_f".to_string())]
+    );
+    assert_eq!(
+        diagnostics("_f: b 1f"),
+        [("undefined-local-label", "1f".to_string())]
+    );
+    assert_eq!(
+        diagnostics("b.xx _f"),
+        [("invalid-condition", "b.xx".to_string())]
+    );
+    assert_eq!(
+        diagnostics(".macro m\nnop"),
+        [("unbalanced-block", ".macro".to_string())]
+    );
+}
+
+#[test]
+fn messages_suggest_fixes() {
+    let message = |text: &str| Analysis::new(text).diagnostics()[0].message.clone();
+    assert!(message("movv x0, x1").contains("did you mean 'mov'?"));
+    assert!(message(".globll _f").contains("did you mean '.global'?"));
+    assert!(message(".type _f, @function").contains("ELF only"));
+    assert!(!message(".type _f, @function").contains("did you mean"));
+    assert!(message("b.eqq _f").contains("did you mean 'eq'?"));
+    assert!(message("m\n.macro m\n.endm").contains("move the .macro above"));
+}
+
+#[test]
+fn unknown_instruction_after_include_is_a_warning() {
+    let analysis = Analysis::new(".include \"macros.s\"\nmy_macro x0\n");
+    let severities: Vec<_> = analysis.diagnostics().iter().map(|d| d.severity).collect();
+    assert_eq!(severities, [Severity::Warning]);
+}
+
+#[test]
+fn macro_and_repeat_bodies_are_not_checked() {
+    let text = ".macro m op\n\\op x0, x1\nfrob\n_x: nop\n.endm\n.rept 2\nfrob\n.endr\n";
+    assert_eq!(Analysis::new(text).diagnostics(), []);
+}
+
+#[test]
+fn symbols() {
+    let text = "\
+.globl _main
+_main:
+1:  b 1b
+counter .req x19
+.set limit, 10
+size = 4
+.macro push2 a, b
+.endm
+";
+    let analysis = Analysis::new(text);
+    let symbols: Vec<_> = analysis
+        .symbols()
+        .iter()
+        .map(|s| (s.name.as_str(), s.kind, s.exported))
+        .collect();
+    assert_eq!(
+        symbols,
+        [
+            ("_main", SymbolKind::Label, true),
+            ("1", SymbolKind::LocalLabel, false),
+            ("counter", SymbolKind::RegisterAlias, false),
+            ("limit", SymbolKind::Constant, false),
+            ("size", SymbolKind::Constant, false),
+            ("push2", SymbolKind::Macro, false),
+        ]
+    );
+}
+
+#[test]
+fn local_labels_resolve_by_direction() {
+    let text = "1: nop\nb 1f\nb 1b\n1: nop\nb 1b\n";
+    let analysis = Analysis::new(text);
+    let targets: Vec<usize> = analysis
+        .references()
+        .iter()
+        .map(|r| analysis.symbols()[r.symbol.expect("resolved")].range.start)
+        .collect();
+    let second = text.rfind("1:").expect("second label");
+    // 1f goes to the second label; the first 1b to the first; the last 1b to the second.
+    assert_eq!(targets, [second, 0, second]);
+}
+
+#[test]
+fn references_resolve_to_definitions() {
+    let text = "_f: b _g\n_g: adrp x0, _g@PAGE\nbl _printf\n";
+    let analysis = Analysis::new(text);
+    let g = analysis
+        .symbols()
+        .iter()
+        .position(|s| s.name == "_g")
+        .expect("_g");
+    assert_eq!(analysis.references_to(g).count(), 2);
+    let printf = analysis
+        .references()
+        .iter()
+        .find(|r| r.name == "_printf")
+        .expect("_printf");
+    assert_eq!(printf.symbol, None);
+    let at = text.find("_g@").expect("use") + 1;
+    assert_eq!(analysis.symbol_at(at), Some(g));
+}
+
+#[test]
+fn register_aliases_are_scoped_and_case_insensitive() {
+    let text = "tmp .req x9\nmov TMP, #1\n.unreq tmp\nmov tmp, #1\n";
+    let analysis = Analysis::new(text);
+    let resolved: Vec<_> = analysis
+        .references()
+        .iter()
+        .filter(|r| r.name.eq_ignore_ascii_case("tmp"))
+        .map(|r| r.symbol.is_some())
+        .collect();
+    assert_eq!(resolved, [true, true, false]);
+}
+
+#[test]
+fn macro_calls_resolve_to_the_macro() {
+    let text = ".macro zero r\nmov \\r, #0\n.endm\nzero x0\n";
+    let analysis = Analysis::new(text);
+    let call = text.rfind("zero").expect("call");
+    let symbol = analysis.symbol_at(call).expect("resolves");
+    assert_eq!(analysis.symbols()[symbol].kind, SymbolKind::Macro);
+}

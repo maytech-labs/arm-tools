@@ -20,7 +20,10 @@ It needs llvm/include and llvm/lib/Target/AArch64; a sparse checkout works:
 
   git clone --depth 1 --branch llvmorg-21.1.8 --filter=blob:none --sparse \\
       https://github.com/llvm/llvm-project /tmp/llvm21
-  git -C /tmp/llvm21 sparse-checkout set llvm/include/llvm llvm/lib/Target/AArch64
+  git -C /tmp/llvm21 sparse-checkout set llvm/include/llvm llvm/lib/Target/AArch64 \\
+      llvm/lib/MC/MCParser
+
+Directives are probed with `xcrun clang`, so this runs on macOS only.
 ";
 
 const OUTPUT: &str = "crates/isa/src/generated.rs";
@@ -77,6 +80,11 @@ fn generate(llvm: &Path, tblgen: &Path) -> Result<String, String> {
     let reg_numbers = parse_register_enum(&register_info)?;
     let reg_classes = parse_register_classes(&matcher)?;
     let reg_names = parse_register_names(&matcher, &parser_cpp)?;
+    let directives = probe_directives(&[
+        read(&llvm.join("llvm/lib/MC/MCParser/AsmParser.cpp"))?,
+        read(&llvm.join("llvm/lib/MC/MCParser/DarwinAsmParser.cpp"))?,
+        parser_cpp.clone(),
+    ])?;
 
     if reg_numbers.len() != reg_classes.len() {
         return Err(format!(
@@ -106,15 +114,17 @@ fn generate(llvm: &Path, tblgen: &Path) -> Result<String, String> {
         reg_names: &reg_names,
         reg_numbers: &reg_numbers,
         class_index: &class_index,
+        directives: &directives,
     })?;
     std::fs::write(OUTPUT, out).map_err(|e| format!("can't write {OUTPUT}: {e}"))?;
     let mnemonics: std::collections::BTreeSet<_> = forms.iter().map(|f| &f.mnemonic).collect();
     Ok(format!(
-        "LLVM {version}, {} forms, {} mnemonics, {} operand classes, {} register names",
+        "LLVM {version}, {} forms, {} mnemonics, {} operand classes, {} register names, {} directives",
         forms.len(),
         mnemonics.len(),
         classes.len(),
-        reg_names.len()
+        reg_names.len(),
+        directives.len()
     ))
 }
 
@@ -611,6 +621,57 @@ fn parse_register_names(
     Ok(out)
 }
 
+/// Directive names clang accepts on macOS. Candidates are every `".name"`
+/// string in LLVM's generic, Darwin, and AArch64 parsers; each is assembled
+/// alone with clang, and kept unless clang calls it an unknown directive.
+fn probe_directives(sources: &[String]) -> Result<Vec<String>, String> {
+    // `.loh` is named by a function, MCLOHDirectiveName(), not a literal.
+    // Harvesting LLVM's AArch64 MC tests found no other gaps (2026-10-26).
+    let mut candidates = std::collections::BTreeSet::from([".loh".to_string()]);
+    // Every `".name"` literal. Matching each literal on its own, rather than
+    // splitting on quotes, survives char literals like '"' in the source.
+    let is_name = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.';
+    for source in sources {
+        for (start, _) in source.match_indices("\".") {
+            let rest = &source[start + 1..];
+            let len = 1 + rest[1..]
+                .find(|c: char| !is_name(c))
+                .unwrap_or(rest.len() - 1);
+            let name = &rest[..len];
+            // `.2byte` is a directive; `.0` isn't.
+            let has_letter = name.chars().any(|c| c.is_ascii_lowercase());
+            if len > 1 && has_letter && rest[len..].starts_with('"') {
+                candidates.insert(name.to_string());
+            }
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("arm-tools-directives-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
+    let source = dir.join("probe.s");
+    let mut known = Vec::new();
+    for candidate in candidates {
+        std::fs::write(&source, format!("{candidate}\n"))
+            .map_err(|e| format!("can't write {}: {e}", source.display()))?;
+        let out = Command::new("xcrun")
+            .args(["clang", "-c", "-arch", "arm64", "-o"])
+            .arg(dir.join("probe.o"))
+            .arg(&source)
+            .output()
+            .map_err(|e| format!("can't run xcrun clang: {e}. gen-isa needs macOS."))?;
+        if !String::from_utf8_lossy(&out.stderr).contains("unknown directive") {
+            known.push(candidate);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    if known.len() < 150 {
+        return Err(format!(
+            "only {} directives; is clang working?",
+            known.len()
+        ));
+    }
+    Ok(known)
+}
+
 struct Render<'a> {
     version: &'a str,
     classes: &'a [Class],
@@ -624,6 +685,7 @@ struct Render<'a> {
     reg_names: &'a BTreeMap<(String, String), String>,
     reg_numbers: &'a HashMap<String, usize>,
     class_index: &'a HashMap<&'a str, usize>,
+    directives: &'a [String],
 }
 
 fn render(r: &Render) -> Result<String, String> {
@@ -789,6 +851,16 @@ fn render(r: &Render) -> Result<String, String> {
             w,
             "    RegisterInfo {{ name: {name:?}, kind: RegisterKind::{kind}, llvm: {reg:?}, class: {class} }},"
         );
+    }
+    let _ = writeln!(w, "];\n");
+
+    let _ = writeln!(
+        w,
+        "/// Sorted. Directive names clang accepts, probed with clang."
+    );
+    let _ = writeln!(w, "pub(crate) static DIRECTIVES: &[&str] = &[");
+    for d in r.directives {
+        let _ = writeln!(w, "    {d:?},");
     }
     let _ = writeln!(w, "];");
     Ok(o)

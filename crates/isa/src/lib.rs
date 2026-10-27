@@ -51,6 +51,17 @@ fn find(head: &str) -> Option<&'static (&'static str, u32, u16)> {
         .map(|i| &MNEMONICS[i])
 }
 
+/// Directive names clang accepts on macOS, sorted, with their leading `.`.
+pub fn directives() -> impl Iterator<Item = &'static str> {
+    DIRECTIVES.iter().copied()
+}
+
+/// Whether clang accepts `name` as a directive, ignoring case.
+pub fn is_directive(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    DIRECTIVES.binary_search(&name.as_str()).is_ok()
+}
+
 /// Which syntax a form is written in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Syntax {
@@ -336,6 +347,24 @@ mod tests {
             Register::lookup_kind("v0", RegisterKind::NeonVector).map(Register::llvm_name),
             Some("Q0")
         );
+    }
+
+    #[test]
+    fn directive_names() {
+        for name in [
+            ".text",
+            ".globl",
+            ".p2align",
+            ".cfi_startproc",
+            ".macro",
+            ".SECTION",
+        ] {
+            assert!(is_directive(name), "{name}");
+        }
+        // ELF-only, so clang on macOS rejects them.
+        for name in [".type", ".size", ".frob"] {
+            assert!(!is_directive(name), "{name}");
+        }
     }
 
     #[test]

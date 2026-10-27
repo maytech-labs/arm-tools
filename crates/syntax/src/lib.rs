@@ -8,3 +8,4 @@ mod parser;
 pub use kinds::{ArmLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 pub use lexer::{LexError, Lexed, Token, lex};
 pub use parser::{Parse, SyntaxError, parse};
+pub use rowan::{NodeOrToken, TextRange, WalkEvent};

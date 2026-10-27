@@ -1,10 +1,12 @@
-//! `cargo xtask survey`: checks that every line arm-syntax reports as an error
-//! is one clang rejects too (docs/decisions/0007-testing.md). Run it on large
+//! `cargo xtask survey`: checks that every line arm-sema reports an error on
+//! (syntax or semantic) is one clang rejects too (docs/decisions/0007-testing.md). Run it on large
 //! bodies of real assembly we don't check in, like LLVM's MC tests.
 //!
 //! Clang sometimes stops reporting partway through a file, so a flagged line
 //! clang didn't mention is assembled again on its own before it counts as a
-//! disagreement.
+//! disagreement. Some errors, like duplicate symbols and ELF relocations, clang
+//! raises while writing the object file, at a line in a temporary file. In a
+//! file with N of those, up to N lines we flag count as agreeing.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -35,7 +37,7 @@ pub fn run(paths: Vec<String>) -> ExitCode {
     }
     files.sort();
 
-    let (mut flagged, mut agreed, mut isolated) = (0, 0, 0);
+    let (mut flagged, mut agreed, mut isolated, mut late) = (0, 0, 0, 0);
     let mut disagreements = Vec::new();
     for file in &files {
         let Ok(text) = std::fs::read_to_string(file) else {
@@ -45,8 +47,8 @@ pub fn run(paths: Vec<String>) -> ExitCode {
         if ours.is_empty() {
             continue;
         }
-        let theirs = match clang_error_lines(file, &scratch) {
-            Ok(lines) => lines,
+        let mut theirs = match clang_errors(file, &scratch) {
+            Ok(errors) => errors,
             Err(error) => {
                 eprintln!("{error}");
                 return ExitCode::FAILURE;
@@ -54,14 +56,19 @@ pub fn run(paths: Vec<String>) -> ExitCode {
         };
         for (line, message) in ours {
             flagged += 1;
-            if theirs.contains(&line) {
+            if theirs.lines.contains(&line) {
                 agreed += 1;
+                continue;
+            }
+            if theirs.late > 0 {
+                theirs.late -= 1;
+                late += 1;
                 continue;
             }
             let source = text.lines().nth(line - 1).unwrap_or_default();
             let alone = scratch.join("line.s");
             let rejected_alone = std::fs::write(&alone, format!("{source}\n")).is_ok()
-                && clang_error_lines(&alone, &scratch).is_ok_and(|l| !l.is_empty());
+                && clang_errors(&alone, &scratch).is_ok_and(|e| !e.lines.is_empty() || e.late > 0);
             if rejected_alone {
                 isolated += 1;
             } else {
@@ -75,7 +82,7 @@ pub fn run(paths: Vec<String>) -> ExitCode {
         println!("{d}");
     }
     println!(
-        "{} files, {flagged} lines we flag: clang rejects {agreed} in the file, {isolated} more on their own; {} disagree",
+        "{} files, {flagged} lines we flag: clang rejects {agreed} in the file, {late} while writing the object, {isolated} more on their own; {} disagree",
         files.len(),
         disagreements.len()
     );
@@ -83,7 +90,7 @@ pub fn run(paths: Vec<String>) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         println!(
-            "each disagreement is a line clang accepts that arm-syntax reports: fix the parser, or add a test showing why"
+            "each disagreement is a line clang accepts that arm-sema reports: fix it, or add a test showing why"
         );
         ExitCode::FAILURE
     }
@@ -102,18 +109,32 @@ fn walk(path: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// 1-based lines where arm-syntax reports an error, with the first message on each.
+/// 1-based lines where arm-sema reports an error, with the first message on each.
 fn error_lines(text: &str) -> BTreeMap<usize, String> {
     let mut lines = BTreeMap::new();
-    for error in arm_syntax::parse(text).errors() {
+    let analysis = arm_sema::Analysis::new(text);
+    let errors = analysis
+        .diagnostics()
+        .iter()
+        .filter(|d| d.severity == arm_sema::Severity::Error);
+    for error in errors {
         let line = text[..error.range.start].matches('\n').count() + 1;
-        lines.entry(line).or_insert_with(|| error.message.clone());
+        lines
+            .entry(line)
+            .or_insert_with(|| format!("[{}] {}", error.code, error.message));
     }
     lines
 }
 
-/// 1-based lines of `file` where clang reports an error.
-fn clang_error_lines(file: &Path, scratch: &Path) -> Result<BTreeSet<usize>, String> {
+/// Where clang reports errors in a file.
+struct ClangErrors {
+    /// 1-based lines in the file.
+    lines: BTreeSet<usize>,
+    /// Errors located in some other file, raised while writing the object.
+    late: usize,
+}
+
+fn clang_errors(file: &Path, scratch: &Path) -> Result<ClangErrors, String> {
     let output = Command::new("xcrun")
         .args(CLANG)
         .arg("-o")
@@ -124,14 +145,21 @@ fn clang_error_lines(file: &Path, scratch: &Path) -> Result<BTreeSet<usize>, Str
             format!("can't run xcrun clang: {e}. The survey needs Xcode's clang (macOS).")
         })?;
     let stderr = String::from_utf8_lossy(&output.stderr);
-    Ok(stderr
-        .lines()
-        .filter_map(|l| l.split_once(": error:"))
-        .filter_map(|(location, _)| {
-            // `path:line:col`; the path may itself contain colons.
-            let mut parts = location.rsplitn(3, ':');
-            let _col = parts.next()?;
-            parts.next()?.parse().ok()
-        })
-        .collect())
+    let mut errors = ClangErrors {
+        lines: BTreeSet::new(),
+        late: 0,
+    };
+    let file = file.to_string_lossy();
+    for (location, _) in stderr.lines().filter_map(|l| l.split_once(": error:")) {
+        // `path:line:col`; the path may itself contain colons.
+        let mut parts = location.rsplitn(3, ':');
+        let (_col, line, path) = (parts.next(), parts.next(), parts.next());
+        match (line.and_then(|l| l.parse().ok()), path) {
+            (Some(line), Some(path)) if path == file => {
+                errors.lines.insert(line);
+            }
+            _ => errors.late += 1,
+        }
+    }
+    Ok(errors)
 }

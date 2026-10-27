@@ -11,3 +11,4 @@ workspace = true
 
 [dependencies]
 arm-syntax.workspace = true
+arm-sema.workspace = true

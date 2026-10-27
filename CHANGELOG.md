@@ -18,5 +18,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - HelloSilicon samples (MIT) in the parser corpus.
 - `arm-isa`: instruction tables generated from LLVM 21.1.8's assembler matcher: 20,864 forms, 1,659 mnemonics, operand classes with clang's messages, features, and 635 register names with their kinds. Mnemonic splitting as clang does it.
 - `cargo xtask gen-isa` to regenerate the tables from an LLVM checkout.
-- Design doc, roadmap, and ADRs 0001 to 0014.
+- `arm-isa`: the 254 directives clang accepts on macOS, probed with clang.
+- `arm-sema`: per-file symbols, references (`1f`/`1b`, register aliases, macros), and clang's semantic errors with suggestions. A line index for UTF-8 and UTF-16 positions.
+- `cargo xtask survey` checks semantic errors as well as syntax.
+- Design doc, roadmap, and ADRs 0001 to 0015.
 - `cargo xtask check` and CI on macOS and Linux.

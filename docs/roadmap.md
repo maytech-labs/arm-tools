@@ -43,8 +43,9 @@ Done when every instruction clang accepts in the corpus matches exactly one form
 
 Done when go to definition would work for every symbol in the corpus, macros expand, and conditional blocks resolve.
 
-- [ ] Symbol table and references
-- [ ] Local numeric labels
+- [x] Symbol table and references
+- [x] Local numeric labels
+- [x] Block structure, duplicate symbols, unknown instructions and directives, with suggestions ([0015](decisions/0015-sema-file-model.md))
 - [ ] Macros, `.rept`, `.irp`
 - [ ] Conditional assembly
 - [ ] `.include`
