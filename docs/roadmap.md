@@ -33,9 +33,10 @@ Done when every instruction clang accepts in the corpus matches exactly one form
 - [x] `cargo xtask gen-isa` and checked-in tables ([0014](decisions/0014-isa-from-asm-matcher.md))
 - [x] Mnemonic splitting as clang does it (`bne`, `b.eq`, `fadd.4s`), register names with kinds
 - [x] Every corpus mnemonic is known
-- [ ] Operand model: convert parsed operands to clang's (`v0.16b`, `[x0, #8]!`, lists, shifts)
-- [ ] Predicates: the 83 families (`isImmInRange`, `isSImmScaled`, `isLogicalImm`...), ported from AArch64AsmParser.cpp
-- [ ] Matcher: forms in clang's order, features, and clang's near-miss messages
+- [x] Operand model: convert parsed operands to clang's (`v0.16b`, `[x0, #8]!`, lists, shifts)
+- [x] Predicates: 378 of 385 ported from AArch64AsmParser.cpp, the rest permissive ([0017](decisions/0017-operand-matching.md))
+- [x] Matcher: forms in clang's order and clang's near-miss messages; 0 disagreements with clang on 2,352 files
+- [ ] CPU feature checks (`instruction requires: sve2`), following `-march` and `.arch`
 - [ ] Hand-written table of C++-parser aliases (`ubfx`, `bfi`, `bne`...) and SYS aliases, each tested against clang
 - [ ] Hover text: our descriptions in `crates/isa/data/descriptions.toml`, common instructions first
 
@@ -49,7 +50,7 @@ Done when go to definition would work for every symbol in the corpus, macros exp
 - [ ] Macros, `.rept`, `.irp`
 - [ ] Conditional assembly
 - [ ] `.include`
-- [ ] Operand checking against `arm-isa`
+- [x] Operand checking against `arm-isa`
 - [ ] `.S` files: decide how to handle the C preprocessor
 
 ## M4: language server v1

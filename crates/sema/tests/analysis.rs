@@ -124,6 +124,56 @@ fn messages_suggest_fixes() {
 }
 
 #[test]
+fn operand_errors_use_clangs_words() {
+    let message = |text: &str| {
+        let analysis = Analysis::new(text);
+        let d = analysis
+            .diagnostics()
+            .first()
+            .cloned()
+            .expect("a diagnostic");
+        assert_eq!(d.code, "invalid-operand", "{text}");
+        (text[d.range.clone()].to_string(), d.message)
+    };
+    let (at, text) = message("add x0, x0, #5000");
+    assert_eq!(at, "#5000");
+    assert!(text.contains("[0, 4095]"), "{text}");
+    let (at, text) = message("ldp x0, x1, [sp, #3]");
+    assert_eq!(at, "#3");
+    assert!(text.contains("multiple of 8"), "{text}");
+    let (at, text) = message("add x0, w1, x2");
+    assert_eq!(at, "w1");
+    assert!(text.contains("the closest form is"), "{text}");
+    let (_, text) = message("add x0, x1");
+    assert!(text.starts_with("too few operands"), "{text}");
+}
+
+#[test]
+fn valid_operands_have_no_diagnostics() {
+    let text = "\
+counter .req x19
+.set limit, 4095
+_f:
+    add x0, x0, #limit
+    add x0, x0, #1, lsl #12
+    add x0, x0, _g@PAGEOFF
+    ldr x1, [x0, _g@GOTPAGEOFF]
+    mov counter, #0x10000
+    mov x0, #-1
+    and x0, x1, #0xff00ff00ff00ff00
+    ldp x29, x30, [sp], #16
+    ld1 {v0.16b-v3.16b}, [x0], #64
+    fmov d0, #1.5
+    fcmp s0, #0.0
+    csel x0, x1, x2, ne
+    sxtw x0, w1
+    casp x0, x1, x2, x3, [x4]
+    ret
+";
+    assert_eq!(Analysis::new(text).diagnostics(), []);
+}
+
+#[test]
 fn unknown_instruction_after_include_is_a_warning() {
     let analysis = Analysis::new(".include \"macros.s\"\nmy_macro x0\n");
     let severities: Vec<_> = analysis.diagnostics().iter().map(|d| d.severity).collect();

@@ -2,6 +2,7 @@
 //! structure, and the errors clang reports for them. Each check here was
 //! probed against clang; see docs/decisions/0015-sema-file-model.md.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 use arm_isa::{CONDITION_CODES, Mnemonic};
@@ -9,6 +10,7 @@ use arm_syntax::ast::{self, Statement};
 use arm_syntax::{NodeOrToken, Parse, SyntaxKind, SyntaxNode, SyntaxToken};
 
 use crate::diagnostic::{Diagnostic, Severity};
+use crate::operands::{self, Scope, Value};
 use crate::suggest::suggest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,6 +52,38 @@ pub struct Reference {
     pub symbol: Option<usize>,
 }
 
+/// An instruction, with its operands in clang's model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Instruction {
+    /// The whole statement.
+    pub range: Range<usize>,
+    pub mnemonic: Mnemonic,
+    pub mnemonic_range: Range<usize>,
+    /// None when the operands can't be judged before assembly: literal pool
+    /// loads, SME arrays, parse errors.
+    pub operands: Option<Vec<arm_isa::Operand>>,
+    /// The source range of each operand.
+    pub operand_ranges: Vec<Range<usize>>,
+}
+
+/// The file's contents in order, outside macro and repeat bodies: what lint
+/// rules and control flow work from.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Item {
+    /// A label: an index into [`Analysis::symbols`].
+    Label(usize),
+    Instruction(Instruction),
+    /// A call to a macro: code we can't see until it's expanded.
+    MacroCall(Range<usize>),
+    /// A switch to another section. `text` is true for code sections.
+    Section {
+        range: Range<usize>,
+        text: bool,
+    },
+    /// Data: `.byte`, `.quad`, `.asciz`, `.space`, and the like.
+    Data(Range<usize>),
+}
+
 /// One file, analyzed.
 #[derive(Debug, Clone)]
 pub struct Analysis {
@@ -59,6 +93,7 @@ pub struct Analysis {
     symbols: Vec<Symbol>,
     references: Vec<Reference>,
     diagnostics: Vec<Diagnostic>,
+    items: Vec<Item>,
 }
 
 impl Analysis {
@@ -66,6 +101,7 @@ impl Analysis {
         let parse = arm_syntax::parse(text);
         let mut builder = Builder {
             symbols: Vec::new(),
+            items: Vec::new(),
             pending: Vec::new(),
             local_refs: Vec::new(),
             diagnostics: Vec::new(),
@@ -73,6 +109,8 @@ impl Analysis {
             has_include: false,
             exported: Vec::new(),
             skip_local_refs: false,
+            constants: HashMap::new(),
+            aliases: HashMap::new(),
             later_macros: macro_names(&parse),
         };
         for error in parse.errors() {
@@ -87,7 +125,7 @@ impl Analysis {
         }
         builder.close_blocks();
         let references = builder.resolve();
-        let mut diagnostics = builder.diagnostics;
+        let mut diagnostics = std::mem::take(&mut builder.diagnostics);
         diagnostics.sort_by_key(|d| (d.range.start, d.range.end));
         Analysis {
             text: text.to_string(),
@@ -96,7 +134,14 @@ impl Analysis {
             symbols: builder.symbols,
             references,
             diagnostics,
+            items: builder.items,
         }
+    }
+
+    /// Labels, instructions, sections, data, and macro calls, in order,
+    /// outside macro and repeat bodies.
+    pub fn items(&self) -> &[Item] {
+        &self.items
     }
 
     pub fn text(&self) -> &str {
@@ -187,6 +232,7 @@ struct Pending {
 
 struct Builder {
     symbols: Vec<Symbol>,
+    items: Vec<Item>,
     pending: Vec<Pending>,
     /// `1f` and `1b`: (number, range, forward).
     local_refs: Vec<(String, Range<usize>, bool)>,
@@ -197,6 +243,11 @@ struct Builder {
     exported: Vec<String>,
     /// Inside a macro or repeat body, where `1f` resolves per expansion.
     skip_local_refs: bool,
+    /// Constants defined so far with known values. Clang folds a constant
+    /// into an operand only if it's defined above the use.
+    constants: HashMap<String, i64>,
+    /// Register aliases in scope: lowercase alias to register text.
+    aliases: HashMap<String, String>,
     /// Every macro defined anywhere in the file, for a better message when one
     /// is called before its definition.
     later_macros: Vec<String>,
@@ -211,17 +262,34 @@ impl Builder {
         let in_body = self.in_body();
         self.skip_local_refs = in_body;
         match statement {
-            Statement::Label(label) => self.label(label, in_body),
-            Statement::Directive(directive) => self.directive(directive, in_body),
+            Statement::Label(label) => {
+                let before = self.symbols.len();
+                self.label(label, in_body);
+                if self.symbols.len() > before {
+                    self.items.push(Item::Label(before));
+                }
+            }
+            Statement::Directive(directive) => {
+                if !in_body {
+                    self.directive_item(directive);
+                }
+                self.directive(directive, in_body);
+            }
             Statement::Assignment(assignment) => {
                 if let Some(name) = assignment.name() {
                     self.define_constant(&name, assignment.syntax(), false);
+                    self.record_value(&name, assignment.value());
                 }
                 if let Some(value) = assignment.value() {
                     self.collect_refs(&value);
                 }
             }
             Statement::RegisterAlias(alias) => {
+                if let (Some(name), Some(target)) = (alias.name(), alias.target()) {
+                    let target = target.text().to_string();
+                    self.aliases
+                        .insert(name.text().to_ascii_lowercase(), target.trim().to_string());
+                }
                 if let Some(name) = alias.name() {
                     self.symbols.push(Symbol {
                         name: name.text().to_ascii_lowercase(),
@@ -234,6 +302,9 @@ impl Builder {
                 }
             }
             Statement::MacroCall(call) => {
+                if !in_body {
+                    self.items.push(Item::MacroCall(node_range(call.syntax())));
+                }
                 if let Some(name) = call.name() {
                     self.pending.push(Pending {
                         name: name.text().to_string(),
@@ -245,7 +316,23 @@ impl Builder {
             }
             Statement::Instruction(insn) => {
                 if let Some(mnemonic) = insn.mnemonic().filter(|_| !in_body) {
-                    self.check_mnemonic(&mnemonic);
+                    let checkable = self.check_mnemonic(&mnemonic);
+                    let flat = if checkable {
+                        self.check_operands(insn, &mnemonic)
+                    } else {
+                        None
+                    };
+                    let (operands, operand_ranges) = match flat {
+                        Some(f) => (Some(f.operands), f.ranges),
+                        None => (None, Vec::new()),
+                    };
+                    self.items.push(Item::Instruction(Instruction {
+                        range: node_range(insn.syntax()),
+                        mnemonic: Mnemonic::parse(mnemonic.text()),
+                        mnemonic_range: range(&mnemonic),
+                        operands,
+                        operand_ranges,
+                    }));
                 }
                 self.collect_refs(insn.syntax());
             }
@@ -359,6 +446,7 @@ impl Builder {
             ".set" | ".equ" | ".equiv" => {
                 if let Some(constant) = &first_name {
                     self.define_constant(constant, directive.syntax(), name == ".equiv");
+                    self.record_value(constant, args.get(1).cloned());
                 }
                 for arg in args.iter().skip(1) {
                     self.collect_refs(arg);
@@ -368,6 +456,7 @@ impl Builder {
             ".unreq" => {
                 if let Some(alias) = &first_name {
                     let lower = alias.text().to_ascii_lowercase();
+                    self.aliases.remove(&lower);
                     // The alias stays in scope for its own `.unreq`.
                     let at = range(alias).end;
                     if let Some(symbol) = self.symbols.iter_mut().rev().find(|s| {
@@ -419,25 +508,129 @@ impl Builder {
         });
     }
 
-    fn check_mnemonic(&mut self, token: &SyntaxToken) {
+    /// Remembers a constant's value for operands below it, or forgets it if
+    /// the new value isn't a known integer.
+    fn record_value(&mut self, name: &SyntaxToken, value: Option<SyntaxNode>) {
+        let scope = Scope {
+            constants: &self.constants,
+            aliases: &self.aliases,
+        };
+        let value = value.map(|v| operands::eval(&v, &scope));
+        let name = unquote(name.text());
+        match value {
+            Some(Value::Int(v)) => {
+                self.constants.insert(name, v);
+            }
+            _ => {
+                self.constants.remove(&name);
+            }
+        }
+    }
+
+    /// Checks operands against the instruction's forms, as clang's matcher does.
+    /// Returns the flattened operands, for the lint rules.
+    fn check_operands(
+        &mut self,
+        insn: &ast::Instruction,
+        mnemonic: &SyntaxToken,
+    ) -> Option<operands::Flattened> {
+        let scope = Scope {
+            constants: &self.constants,
+            aliases: &self.aliases,
+        };
+        let flat = operands::flatten(insn, &scope)?;
+        let parsed = Mnemonic::parse(mnemonic.text());
+        let arm_isa::MatchResult::Mismatch(mismatch) =
+            arm_isa::match_instruction(&parsed, &flat.operands)
+        else {
+            return Some(flat);
+        };
+        let at = match mismatch.operand {
+            Some(i) => flat.ranges[i].clone(),
+            None => {
+                let end = flat.ranges.last().map_or(range(mnemonic).end, |r| r.end);
+                range(mnemonic).start..end
+            }
+        };
+        let mut message = mismatch.message.clone();
+        if let Some(form) = mismatch
+            .closest
+            .filter(|_| message.ends_with("for instruction"))
+        {
+            message.push_str(&format!(": the closest form is `{}`", form.signature()));
+        }
+        self.diagnostics
+            .push(Diagnostic::error(at, "invalid-operand", message));
+        Some(flat)
+    }
+
+    /// Records section switches and data directives as items.
+    fn directive_item(&mut self, directive: &ast::Directive) {
+        let Some(name) = directive.name() else {
+            return;
+        };
+        let lower = name.text().to_ascii_lowercase();
+        let whole = node_range(directive.syntax());
+        let text_section =
+            |args: &str| args.starts_with("__TEXT,__text") || args.contains("pure_instructions");
+        match lower.as_str() {
+            ".text" => self.items.push(Item::Section {
+                range: whole,
+                text: true,
+            }),
+            ".data" | ".bss" | ".const" | ".const_data" | ".cstring" | ".literal4"
+            | ".literal8" | ".literal16" | ".tdata" | ".tbss" | ".static_data" => {
+                self.items.push(Item::Section {
+                    range: whole,
+                    text: false,
+                });
+            }
+            ".section" => {
+                let args: String = directive
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .split_once(char::is_whitespace)
+                    .map(|(_, rest)| rest.chars().filter(|c| !c.is_whitespace()).collect())
+                    .unwrap_or_default();
+                let text = text_section(&args);
+                self.items.push(Item::Section { range: whole, text });
+            }
+            ".byte" | ".short" | ".hword" | ".2byte" | ".long" | ".int" | ".word" | ".4byte"
+            | ".quad" | ".xword" | ".8byte" | ".dword" | ".octa" | ".float" | ".single"
+            | ".double" | ".ascii" | ".asciz" | ".string" | ".space" | ".skip" | ".zero"
+            | ".fill" | ".inst" | ".zerofill" | ".ltorg" | ".pool" => {
+                self.items.push(Item::Data(whole));
+            }
+            _ => {}
+        }
+    }
+
+    /// Reports an unknown mnemonic or condition. Returns whether it's an
+    /// instruction whose operands can be checked.
+    fn check_mnemonic(&mut self, token: &SyntaxToken) -> bool {
         let text = token.text();
         let mnemonic = Mnemonic::parse(text);
         if let Some(condition) = &mnemonic.condition {
-            if !CONDITION_CODES.contains(&condition.as_str()) {
-                let mut message = format!("invalid condition code '{condition}'");
-                if let Some(better) = suggest(condition, CONDITION_CODES.iter().copied()) {
-                    message.push_str(&format!(": did you mean '{better}'?"));
-                }
-                self.diagnostics.push(Diagnostic::error(
-                    range(token),
-                    "invalid-condition",
-                    message,
-                ));
+            if CONDITION_CODES.contains(&condition.as_str()) {
+                return true;
             }
-            return;
+            let mut message = format!("invalid condition code '{condition}'");
+            if let Some(better) = suggest(condition, CONDITION_CODES.iter().copied()) {
+                message.push_str(&format!(": did you mean '{better}'?"));
+            }
+            self.diagnostics.push(Diagnostic::error(
+                range(token),
+                "invalid-condition",
+                message,
+            ));
+            return false;
         }
-        if arm_isa::is_instruction(text) || self.find(text, SymbolKind::Macro).is_some() {
-            return;
+        if self.find(text, SymbolKind::Macro).is_some() {
+            return false;
+        }
+        if arm_isa::is_instruction(text) {
+            return true;
         }
         if self.later_macros.iter().any(|m| m == text) {
             self.diagnostics.push(Diagnostic::error(
@@ -447,7 +640,7 @@ impl Builder {
                     "'{text}' is a macro defined later in the file: clang needs a macro defined before its first use, so move the .macro above this line"
                 ),
             ));
-            return;
+            return false;
         }
         let mut message = format!("unknown instruction '{text}'");
         if let Some(better) = suggest(&mnemonic.head, arm_isa::mnemonics()) {
@@ -468,6 +661,7 @@ impl Builder {
                 message,
             ));
         }
+        false
     }
 
     /// Names and local label references inside a node.

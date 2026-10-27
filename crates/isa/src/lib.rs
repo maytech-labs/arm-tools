@@ -10,12 +10,18 @@
 mod docs;
 #[rustfmt::skip]
 mod generated;
+mod matcher;
 mod mnemonic;
+mod operand;
+mod predicates;
 mod tables;
 
 pub use docs::directive_description;
 use generated::*;
+pub use matcher::{MatchResult, Mismatch, match_instruction};
 pub use mnemonic::{CONDITION_CODES, Mnemonic, Special};
+pub use operand::{Check, Imm, Operand, RegisterOperand};
+pub use predicates::check;
 pub use tables::{ClassKind, RegisterKind};
 
 /// The LLVM release the tables come from.

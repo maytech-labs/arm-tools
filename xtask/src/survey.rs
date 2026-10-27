@@ -21,9 +21,11 @@ const CLANG: &[&str] = &[
     "-march=armv9.4-a+sve2+sme2",
 ];
 
-pub fn run(paths: Vec<String>) -> ExitCode {
+pub fn run(args: Vec<String>) -> ExitCode {
+    let recall = args.iter().any(|a| a == "--recall");
+    let paths: Vec<String> = args.into_iter().filter(|a| a != "--recall").collect();
     if paths.is_empty() {
-        eprintln!("usage: cargo xtask survey <path>...");
+        eprintln!("usage: cargo xtask survey [--recall] <path>...");
         return ExitCode::from(2);
     }
     let scratch = std::env::temp_dir().join(format!("arm-tools-survey-{}", std::process::id()));
@@ -38,13 +40,15 @@ pub fn run(paths: Vec<String>) -> ExitCode {
     files.sort();
 
     let (mut flagged, mut agreed, mut isolated, mut late) = (0, 0, 0, 0);
+    // With --recall: lines clang rejects, and how many of those we flag too.
+    let (mut clang_lines, mut caught) = (0, 0);
     let mut disagreements = Vec::new();
     for file in &files {
         let Ok(text) = std::fs::read_to_string(file) else {
             continue;
         };
         let ours = error_lines(&text);
-        if ours.is_empty() {
+        if ours.is_empty() && !recall {
             continue;
         }
         let mut theirs = match clang_errors(file, &scratch) {
@@ -54,6 +58,8 @@ pub fn run(paths: Vec<String>) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+        clang_lines += theirs.lines.len();
+        caught += theirs.lines.iter().filter(|l| ours.contains_key(l)).count();
         for (line, message) in ours {
             flagged += 1;
             if theirs.lines.contains(&line) {
@@ -86,6 +92,12 @@ pub fn run(paths: Vec<String>) -> ExitCode {
         files.len(),
         disagreements.len()
     );
+    if recall {
+        println!(
+            "recall: clang rejects {clang_lines} lines; arm-sema flags {caught} of them ({:.1}%)",
+            100.0 * caught as f64 / clang_lines.max(1) as f64
+        );
+    }
     if disagreements.is_empty() {
         ExitCode::SUCCESS
     } else {

@@ -24,5 +24,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `armls`, the language server: diagnostics, hover (instruction forms with required features, register roles in Apple's ABI, symbols, directives), completion, go to definition, references, document highlight, rename, document symbols, and semantic tokens. UTF-8 or UTF-16 positions.
 - `make install`, and editor setup for Neovim and Helix in `editors/`.
 - `cargo xtask nvim-smoke`: runs armls in headless Neovim.
-- Design doc, roadmap, and ADRs 0001 to 0016.
+- Operand checking: every instruction is matched against clang's forms, with clang's messages for out-of-range immediates, misaligned offsets, wrong registers, and operand counts. Hover shows instruction signatures.
+- `cargo xtask survey --recall`: how many of clang's errors arm-sema catches.
+- Design doc, roadmap, and ADRs 0001 to 0017.
 - `cargo xtask check` and CI on macOS and Linux.
