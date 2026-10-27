@@ -37,18 +37,25 @@ fn read(path: &Path) -> String {
 
 /// Whether clang accepts the file, or None off macOS.
 fn clang_accepts(path: &Path) -> Option<bool> {
+    clang_says(path).map(|(accepted, _)| accepted)
+}
+
+/// Whether clang accepts the file and what it printed, or None off macOS.
+fn clang_says(path: &Path) -> Option<(bool, String)> {
     if !cfg!(target_os = "macos") {
         return None;
     }
-    let object = std::env::temp_dir().join(format!("arm-sema-{}.o", std::process::id()));
-    let status = Command::new("xcrun")
+    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("x");
+    let object = std::env::temp_dir().join(format!("arm-sema-{}-{name}.o", std::process::id()));
+    let output = Command::new("xcrun")
         .args(["clang", "-c", "-arch", "arm64", "-o"])
         .arg(&object)
         .arg(path)
         .output()
-        .map(|o| o.status.success());
+        .unwrap_or_else(|e| panic!("xcrun: {e}"));
     let _ = std::fs::remove_file(&object);
-    Some(status.unwrap_or_else(|e| panic!("xcrun: {e}")))
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    Some((output.status.success(), stderr))
 }
 
 /// (code, text at the range) for each diagnostic.
@@ -106,10 +113,15 @@ fn valid_cases_have_no_diagnostics() {
 #[test]
 fn oracle_clang_accepts_the_valid_cases() {
     for path in files(&manifest().join("tests/data/valid")) {
-        match clang_accepts(&path) {
+        match clang_says(&path) {
             None => return eprintln!("skipped: the clang oracle runs only on macOS"),
-            Some(false) => panic!("clang rejects {}, so it isn't valid", path.display()),
-            Some(true) => {}
+            Some((false, stderr)) => {
+                panic!(
+                    "clang rejects {}, so it isn't valid:\n{stderr}",
+                    path.display()
+                )
+            }
+            Some((true, _)) => {}
         }
     }
 }

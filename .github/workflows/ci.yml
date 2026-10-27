@@ -32,6 +32,9 @@ jobs:
           toolchain: "1.98.1"
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # The oracle's version, for when its answers differ from a newer clang's.
+      - if: runner.os == 'macOS'
+        run: xcrun clang --version
       - run: cargo xtask check
 
   linux-examples:
@@ -45,5 +48,5 @@ jobs:
         with:
           toolchain: "1.98.1"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: make -C examples/linux run > out.txt && diff out.txt examples/linux/expected.txt
+      - run: make -s --no-print-directory -C examples/linux run > out.txt && diff out.txt examples/linux/expected.txt
       - run: cargo run -q -p arm-cli --bin armtool -- lint examples/linux
