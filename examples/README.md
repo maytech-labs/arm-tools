@@ -17,6 +17,13 @@ make fib          # or one at a time, into build/
 | [macros](macros/main.s) | `.include`, macros with default arguments, `.irp`, `.rept` | Go to definition on `print` jumps to [syscalls.s](macros/syscalls.s); break the macro body and the error appears at the call |
 | [preprocessor](preprocessor/strlen.S) | A `.S` file: `#include`, `#define`, a function-like macro, `#if` | Errors map back through the preprocessor; set `VERBOSE` to 0 |
 | [linked](linked/main.s) | A program in two files, assembled separately and linked: calls go both ways between them | `gd` on `_print_line` jumps to [text.s](linked/text.s); `grr` lists uses in both files; hover shows where it's defined |
+| [strings](strings/upper.s) | Byte loads and stores (`ldrb`, `strb`), editing a string in place, writable data in `__DATA` | Hover `ldrb` and `strb` |
+| [sort](sort/sort.s) | Insertion sort: nested loops, signed comparisons, `[x0, x2, lsl #3]` indexing | Hover `b.le`; references on `sort` |
+| [jumptable](jumptable/switch.s) | A `switch` as a jump table of offsets and `br`; strings kept near code for `adr` | Labels named `s0` to `s6` look like registers: `adr` reads them as labels, a branch wouldn't |
+| [bits](bits/bits.s) | `movz`/`movk` to build a constant, `clz`, `rbit`, and popcount with NEON `cnt` and `addv` | Hover `cnt` and `addv` for their forms |
+| [atomics](atomics/atomics.s) | LSE atomics: `ldaddal` and compare-and-swap (`casal`) | Hover shows they need `lse`; add `.arch armv8-a` at the top to see the error when it's off |
+| [c-interop](c-interop/dot.s) | C calling assembly and assembly calling C: arguments in x0 to x2, a double result in d0, d8 kept across calls | `gd` on `_report` finds nothing: it's in [main.c](c-interop/main.c), which isn't indexed yet |
+| [echo](echo/echo.s) | stdin to stdout with the `read` and `write` syscalls; Darwin's carry flag on error | Inlay hints name `read` and `write`; try `echo hi \| ./build/echo` |
 | [mistakes](mistakes/mistakes.s) | Doesn't build: one of each problem armls catches, labeled | `]d` through them; `gra` on the ones marked quick fix |
 
 Things these examples ran into while being written, which armls now explains:

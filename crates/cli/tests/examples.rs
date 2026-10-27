@@ -34,6 +34,13 @@ fn valid_examples_lint_clean() {
         "macros",
         "preprocessor",
         "linked",
+        "strings",
+        "sort",
+        "jumptable",
+        "bits",
+        "atomics",
+        "c-interop",
+        "echo",
     ] {
         let (code, out) = armtool(&["lint", dir]);
         assert_eq!(code, Some(0), "{dir}: {out}");
@@ -94,6 +101,13 @@ fn oracle_examples_build_and_run() {
         "Counted with a hand-written strlen",
         "Counting down, across two files:",
         "liftoff",
+        "SHOUT THIS, PLEASE (BUT NOT THE 123S)",
+        "-100 -7 -1 0 3 3 19 42 64 88",
+        "Wednesday\nThursday",
+        "popcount 28",
+        "cas saw 100 and didn't",
+        "dot = 11",
+        "echoed through read and write",
     ] {
         assert!(out.contains(expected), "missing {expected:?} in:\n{out}");
     }

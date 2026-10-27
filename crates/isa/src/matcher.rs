@@ -393,6 +393,21 @@ fn check_class(class: OperandClass, operand: &Operand) -> Check {
     if matches!(direct, Check::Match | Check::Unknown) {
         return direct;
     }
+    // adr and adrp parse their operand as an expression, so a label named
+    // like a register (`adr x0, s0`) is a symbol there. Branches don't do
+    // this: `b d1` is an error even with a label d1.
+    if let Operand::Register(r) = operand {
+        let label_class = matches!(class.predicate(), "isAdrLabel" | "isAdrpLabel");
+        if label_class && r.suffix.is_none() && r.shift.is_none() {
+            let symbol = Operand::Imm(Imm::Symbol {
+                name: r.register.name().to_string(),
+                variant: None,
+                specifier: None,
+                addend: 0,
+            });
+            return check_one(class, &symbol);
+        }
+    }
     if let Operand::Ident(name) = operand {
         let lower = name.to_ascii_lowercase();
         let readings = [
@@ -601,6 +616,13 @@ mod tests {
         assert_eq!(matched("ldar", &ops), Some("LDARX"));
         let ops = [reg("x4"), tok("["), reg("sp"), imm(8), tok("]")];
         assert!(matched("ldar", &ops).is_none());
+    }
+
+    #[test]
+    fn adr_reads_register_names_as_labels() {
+        assert_eq!(matched("adr", &[reg("x0"), reg("s0")]), Some("ADR"));
+        // Branches don't: clang rejects `b d1` even with a label d1.
+        assert!(matched("b", &[reg("d1")]).is_none());
     }
 
     #[test]

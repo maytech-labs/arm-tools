@@ -37,8 +37,9 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Conditional assembly: `.if` and its relatives are evaluated as clang would; skipped branches aren't checked and are greyed out in the editor.
 - Macro calls, `.rept`, `.irp`, and `.irpc` are expanded and checked, with clang's argument rules; problems are reported at the call.
 - Lint rules `flow/undefined-register` (scratch registers read before they're set, at entry or after a call) and `abi/syscall-number` (svc without x16), by must-dataflow over the control-flow graph.
+- `adr` and `adrp` read a label named like a register (`adr x0, s0`) as a label, as clang does; branches still don't.
 - Navigation between files that are assembled separately and linked: go to definition, references, and hover on global labels in other files, and workspace symbol search. `.private_extern` labels count as global.
-- `examples/`: seven programs that build and run (syscalls, printf, recursion, NEON, macros and includes, the C preprocessor), and a file of labeled mistakes to try armls on.
+- `examples/`: fourteen programs that build and run (syscalls, printf, recursion, NEON, macros and includes, the C preprocessor), and a file of labeled mistakes to try armls on.
 - Operand errors explain a constant used above its definition, which clang only folds when it's defined first.
 - Inlay hints in armls: constant values where they're used, and the syscall a `mov x16, #n` sets up.
 - `.S` files go through clang's C preprocessor for diagnostics, mapped back to the lines you wrote.
