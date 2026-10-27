@@ -73,7 +73,7 @@ Every time you make a decision, document it in `docs/decisions/`. The next agent
 
 A decision needs an ADR when you chose between reasonable options and a future reader could ask "why is it like this?": a dependency, a data format, an algorithm, a lint rule's default, an interpretation of Apple's assembler behavior, or a tradeoff. Following an existing pattern doesn't need one.
 
-Copy `docs/decisions/0000-template.md` to the next number, and add it to the list in `docs/README.md`. Keep it short. ADRs are append-only: to change a decision, write a new one that supersedes the old, and change only the old one's status line.
+Copy `docs/decisions/0000-template.md` to the next number, and add it to the list in `docs/README.md` and to `docs/SUMMARY.md`, the docs site's table of contents (`crates/lint/tests/docs.rs` fails until every page is listed). The site is built with mdBook (`mdbook build docs`) and published from `main` by `.github/workflows/docs.yml`. Keep it short. ADRs are append-only: to change a decision, write a new one that supersedes the old, and change only the old one's status line.
 
 ## Writing
 

@@ -12,7 +12,7 @@ mod workspace;
 use std::process::ExitCode;
 
 const HELP: &str = "\
-armls: language server for AArch64 assembly on macOS
+armls: language server for AArch64 assembly on macOS and Linux
 
 Editors start armls and talk to it over stdin and stdout. See the editors/
 directory in the arm-tools repository for setup.

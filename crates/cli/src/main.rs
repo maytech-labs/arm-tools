@@ -8,7 +8,7 @@ use arm_lint::Config;
 use arm_sema::{Diagnostic, Encoding, Severity};
 
 const HELP: &str = "\
-armtool: check and lint AArch64 assembly for macOS
+armtool: check, lint, and format AArch64 assembly for macOS and Linux
 
 Usage:
   armtool check [--json] [--fix] <path>...

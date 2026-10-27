@@ -1,0 +1,13 @@
+[book]
+title = "arm-tools"
+description = "A language server, linter, and formatter for AArch64 assembly on macOS and Linux"
+language = "en"
+src = "."
+
+[build]
+build-dir = "../target/book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/maytech-labs/arm-tools"
+edit-url-template = "https://github.com/maytech-labs/arm-tools/edit/main/docs/{path}"

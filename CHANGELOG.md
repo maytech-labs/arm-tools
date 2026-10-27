@@ -75,3 +75,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Structs from C: struct and typedef definitions in the project's C files type the assembly that uses them, with no annotation.
 - Quick fixes for type findings: insert `sxtw`, swap a signed condition for its unsigned counterpart (or `sdiv` and `udiv`), use X registers for a pointer, and correct an offset constant.
 - Lint: `flow/dead-store` finds register writes nothing reads. The dataflow now knows that `movk`, `bfi`, accumulating NEON instructions, and lane moves read their destination, and that vector lists (`{v0.4s, v1.4s}`) are read by stores and written by loads.
+- A docs site, built from docs/ with mdBook and published to GitHub Pages: getting started, the editor, the command line, configuration, platforms, lint rules, types, and the design and decisions.

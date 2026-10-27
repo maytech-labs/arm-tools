@@ -1,0 +1,48 @@
+name: Docs
+
+# Builds the docs site from docs/ with mdBook on every change, and publishes
+# it to GitHub Pages from main once Pages is set to "GitHub Actions" in the
+# repository's settings and the repository variable PUBLISH_DOCS is "true".
+
+on:
+  pull_request:
+    paths: ["docs/**", ".github/workflows/docs.yml"]
+  push:
+    branches: [main]
+    paths: ["docs/**", ".github/workflows/docs.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install mdBook
+        run: |
+          curl -sSfL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: mdbook build docs
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: target/book
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PUBLISH_DOCS == 'true'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
