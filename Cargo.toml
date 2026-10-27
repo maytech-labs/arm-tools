@@ -6,7 +6,8 @@ members = ["crates/*", "xtask"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
-license = "MIT"
+# REAL 1.0, which has no SPDX identifier (docs/decisions/0045-real-license.md).
+license-file = "LICENSE.md"
 authors = ["maytech-labs"]
 repository = "https://github.com/maytech-labs/arm-tools"
 homepage = "https://github.com/maytech-labs/arm-tools"

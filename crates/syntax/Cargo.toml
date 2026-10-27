@@ -4,7 +4,7 @@ description = "Lexer and lossless, error-tolerant parser for AArch64 assembly, A
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license-file.workspace = true
 authors.workspace = true
 repository.workspace = true
 

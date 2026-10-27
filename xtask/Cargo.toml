@@ -3,7 +3,7 @@ name = "xtask"
 description = "Repo automation for arm-tools. Run with `cargo xtask`."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 publish = false
 
 [lints]

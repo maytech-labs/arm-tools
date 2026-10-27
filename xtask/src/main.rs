@@ -3,6 +3,7 @@
 
 mod gen_features;
 mod gen_isa;
+mod notices;
 mod survey;
 
 use std::process::{Command, ExitCode};
@@ -11,10 +12,11 @@ const USAGE: &str = "\
 cargo xtask <task>
 
 Tasks:
-  check            Everything CI runs: fmt, clippy, tests
+  check            Everything CI runs: fmt, clippy, tests, third-party notices
   gen-isa          Regenerate crates/isa/src/generated.rs from LLVM
                    (run with no arguments for usage)
   nvim-smoke       Run armls inside headless Neovim and check what a user sees
+  notices          Regenerate THIRD-PARTY-NOTICES.md from Cargo.lock
   survey <path>... Compare arm-syntax's errors with clang's on every .s file
                    under the paths (macOS only; see AGENTS.md)
 ";
@@ -25,6 +27,7 @@ fn main() -> ExitCode {
         Some("check") => check(),
         Some("gen-isa") => gen_isa::run(std::env::args().skip(2).collect()),
         Some("nvim-smoke") => nvim_smoke(),
+        Some("notices") => notices::run(std::env::args().skip(2).collect()),
         Some("survey") => survey::run(std::env::args().skip(2).collect()),
         _ => {
             eprint!("{USAGE}");
@@ -46,6 +49,7 @@ fn check() -> ExitCode {
             "warnings",
         ],
         &["test", "--workspace"],
+        &["xtask", "notices", "--check"],
     ];
     for args in steps {
         eprintln!("==> cargo {}", args.join(" "));

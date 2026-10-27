@@ -67,4 +67,10 @@ Needs Rust 1.98 (pinned in `rust-toolchain.toml`). The oracle tests need Xcode's
 
 ## License
 
-[MIT](LICENSE). Not affiliated with Arm Limited.
+The [Reciprocal Ethical AI License (REAL) 1.0](LICENSE.md). It's source-available, not an OSI-approved open source license, so read it before you depend on the code.
+
+- `crates/isa` contains tables and code derived from LLVM, which stay under Apache-2.0 WITH LLVM-exception ([crates/isa/LICENSE.md](crates/isa/LICENSE.md)).
+- The HelloSilicon samples in the parser's test corpus are MIT licensed ([their README](crates/syntax/tests/data/corpus/hellosilicon/README.md)).
+- The licenses of the crates the binaries are built from are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+Not affiliated with Arm Limited.

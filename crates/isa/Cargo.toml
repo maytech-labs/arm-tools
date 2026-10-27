@@ -4,7 +4,9 @@ description = "AArch64 instruction tables generated from LLVM: mnemonics, operan
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license = "MIT AND Apache-2.0 WITH LLVM-exception"
+# REAL 1.0 for our code, Apache-2.0 WITH LLVM-exception for what derives
+# from LLVM: see LICENSE.md.
+license-file = "LICENSE.md"
 authors.workspace = true
 repository.workspace = true
 

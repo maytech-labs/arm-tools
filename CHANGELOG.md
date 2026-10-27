@@ -40,5 +40,6 @@ The first release: a language server, linter, and formatter for AArch64 assembly
 ### Project
 
 - Example programs for macOS and Linux that build and run, and a file of labeled mistakes.
-- A docs site built from `docs/` with mdBook, with the design and 44 decision records.
+- A docs site built from `docs/` with mdBook, with the design and 45 decision records.
 - CI on macOS, Linux, and Arm Linux; prebuilt binaries attached to each release.
+- Licensed under the Reciprocal Ethical AI License (REAL) 1.0, with `crates/isa`'s LLVM-derived parts under Apache-2.0 WITH LLVM-exception. `THIRD-PARTY-NOTICES.md` carries the licenses of every crate in the binaries.

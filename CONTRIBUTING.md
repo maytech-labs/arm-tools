@@ -37,4 +37,4 @@ To see how a line parses: `echo 'ldr x0, [x1, #8]!' | cargo run -q -p arm-syntax
 
 ## License
 
-By contributing, you agree that your contributions are licensed under the project's [MIT license](LICENSE), and for `crates/isa`, under its MIT and Apache-2.0 WITH LLVM-exception terms.
+By contributing, you agree that your contributions are licensed under the project's license, the [Reciprocal Ethical AI License (REAL) 1.0](LICENSE.md). In `crates/isa`, changes to the parts derived from LLVM stay under Apache-2.0 WITH LLVM-exception as well; see [crates/isa/LICENSE.md](crates/isa/LICENSE.md).

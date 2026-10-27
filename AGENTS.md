@@ -9,12 +9,12 @@ arm-tools is a Cargo workspace of tools for AArch64 assembly on macOS: a languag
 | Crate | Package | What it is |
 |---|---|---|
 | `crates/syntax` | `arm-syntax` | Lexer and lossless, error-tolerant parser. Every byte of the input is in the tree. |
-| `crates/isa` | `arm-isa` | AArch64 instruction tables generated from LLVM: mnemonics, operand forms, registers, features. `src/generated.rs` is written by `cargo xtask gen-isa`; never edit it by hand. Licensed MIT and Apache-2.0 WITH LLVM-exception ([0014](docs/decisions/0014-isa-from-asm-matcher.md)). |
+| `crates/isa` | `arm-isa` | AArch64 instruction tables generated from LLVM: mnemonics, operand forms, registers, features. `src/generated.rs` is written by `cargo xtask gen-isa`; never edit it by hand. Licensed REAL 1.0 and Apache-2.0 WITH LLVM-exception ([0014](docs/decisions/0014-isa-from-asm-matcher.md), [0045](docs/decisions/0045-real-license.md)). |
 | `crates/sema` | `arm-sema` | The semantic model: symbols, labels, macros, `.include`, sections, conditional assembly |
 | `crates/lint` | `arm-lint` | The lint engine and its rules. Adding a rule: add it to `RULES` in `rules.rs` with tests, then regenerate docs/lint.md (`crates/lint/tests/docs.rs` fails until you do) |
 | `crates/lsp` | `arm-lsp` | The `armls` binary: the language server |
 | `crates/cli` | `arm-cli` | The `armtool` binary: `check`, `lint`, `rules`, `explain` from the command line and CI |
-| `xtask` | (not published) | Repo automation: `cargo xtask check`, `survey`, `gen-isa`, `nvim-smoke` |
+| `xtask` | (not published) | Repo automation: `cargo xtask check`, `survey`, `gen-isa`, `nvim-smoke`, `notices` |
 | `editors/` | | Editor setup; `editors/neovim/smoke.lua` is the headless Neovim test |
 
 Dependencies point one way: `syntax` and `isa` at the bottom, then `sema`, then `lint`, then `lsp` and `cli`. Nothing lower depends on anything higher.
@@ -31,7 +31,7 @@ The design is in [docs/design.md](docs/design.md), the milestones in [docs/roadm
 
 ## Rules
 
-1. **Rust only**, built with Cargo ([0002](docs/decisions/0002-rust-and-cargo.md)). The one exception is `editors/vscode`, TypeScript glue that starts armls ([0025](docs/decisions/0025-distribution.md)); check it with `npm run check` there. Prefer small dependencies; say why in the commit or an ADR when you add one.
+1. **Rust only**, built with Cargo ([0002](docs/decisions/0002-rust-and-cargo.md)). The one exception is `editors/vscode`, TypeScript glue that starts armls ([0025](docs/decisions/0025-distribution.md)); check it with `npm run check` there. Prefer small dependencies; say why in the commit or an ADR when you add one. When dependencies change, run `cargo xtask notices` to regenerate `THIRD-PARTY-NOTICES.md`; `cargo xtask check` fails until you do ([0045](docs/decisions/0045-real-license.md)).
 2. **Clang is the source of truth** ([0004](docs/decisions/0004-apple-aarch64-first.md), [0038](docs/decisions/0038-linux.md)): `clang -c -arch arm64` for Darwin, the main platform, and `clang -c --target=aarch64-linux-gnu` for Linux. If clang accepts it, we accept it; if clang rejects it, we report it. When unsure, probe clang and write the result down as a test.
 3. **Never lose a byte.** The syntax tree is lossless ([0008](docs/decisions/0008-lossless-syntax-tree.md)). The parser never fails: bad input becomes error nodes plus diagnostics, and the rest of the file still parses.
 4. **Never crash the server.** A panic in `armls` kills the user's editor session. Same rule as below: no `unwrap`/`expect` outside tests unless a comment proves it can't fail.
