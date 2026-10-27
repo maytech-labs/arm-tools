@@ -124,7 +124,14 @@ fn walk(path: &Path, out: &mut Vec<PathBuf>) {
 /// 1-based lines where arm-sema reports an error, with the first message on each.
 fn error_lines(text: &str) -> BTreeMap<usize, String> {
     let mut lines = BTreeMap::new();
-    let analysis = arm_sema::Analysis::new(text);
+    // The same target as the clang command below.
+    // On Darwin, -march adds to the apple-m1 CPU's features.
+    let mut features = arm_isa::FeatureSet::apple_default();
+    let features = features
+        .add_arch("armv9.4-a+sve2+sme2")
+        .ok()
+        .map(|()| features);
+    let analysis = arm_sema::Analysis::with_options(text, None, None, features);
     let errors = analysis
         .diagnostics()
         .iter()

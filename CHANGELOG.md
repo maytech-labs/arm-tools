@@ -33,5 +33,6 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `armtool fmt` and formatting in armls: aligned mnemonics, operands, and comments, changing only whitespace (proved by byte-identical objects from clang). `[format]` in armtool.toml.
 - Quick fixes: suggested instructions, directives, and conditions, ELF directive removal, stack rounding, page-offset variants, and the missing `add` after `adrp`. Code actions in armls; `armtool check --fix` and `lint --fix`.
 - Folding ranges in armls: macro, repeat, and conditional blocks, label sections, and comment runs.
-- Design doc, roadmap, and ADRs 0001 to 0021.
+- CPU feature checks: "instruction requires: cssc" and friends, following clang's default target (apple-m1), `.arch`, `.cpu`, `.arch_extension`, and `[target]` in armtool.toml. Feature data generated from LLVM.
+- Design doc, roadmap, and ADRs 0001 to 0022.
 - `cargo xtask check` and CI on macOS and Linux.

@@ -222,6 +222,11 @@ impl Server<'_> {
             Some(dir) => arm_lint::Config::discover(dir),
             None => Ok(arm_lint::Config::default()),
         };
+        // A broken config still gets clang's default target.
+        let features = config.as_ref().map_or_else(
+            |_| arm_isa::FeatureSet::apple_default(),
+            |c| c.features.clone(),
+        );
         let analysis = match &path {
             Some(path) => {
                 let dirs = config.as_ref().map_or_else(
@@ -234,9 +239,9 @@ impl Server<'_> {
                     .filter_map(|(u, d)| Some((file_path(u)?, d.analysis.text().to_string())))
                     .collect();
                 let resolver = arm_sema::FsResolver { dirs, open };
-                Analysis::with_includes(text, Some(path.clone()), &resolver)
+                Analysis::with_options(text, Some(path.clone()), Some(&resolver), Some(features))
             }
-            None => Analysis::new(text),
+            None => Analysis::with_options(text, None, None, Some(features)),
         };
         let mut found: Vec<arm_sema::Diagnostic> = analysis.diagnostics().to_vec();
         match config {

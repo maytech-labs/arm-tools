@@ -101,7 +101,20 @@ fn generate(llvm: &Path, tblgen: &Path) -> Result<String, String> {
         ));
     }
 
-    let out = render(&Render {
+    let json = crate::gen_features::dump_json(tblgen, llvm, &target)?;
+    let mut bits: Vec<&str> = feature_sets
+        .iter()
+        .flat_map(|(_, bits)| bits.iter().map(String::as_str))
+        .collect();
+    bits.sort_unstable();
+    bits.dedup();
+    let feature_predicates: Vec<&str> = bits
+        .iter()
+        .map(|b| b.trim_start_matches("Feature_").trim_end_matches("Bit"))
+        .collect();
+    let features = crate::gen_features::extract(&json, &feature_predicates)?;
+    drop(json);
+    let mut out = render(&Render {
         version: &version,
         classes: &classes,
         predicates: &predicates,
@@ -116,15 +129,17 @@ fn generate(llvm: &Path, tblgen: &Path) -> Result<String, String> {
         class_index: &class_index,
         directives: &directives,
     })?;
+    features.render(&mut out, &feature_predicates);
     std::fs::write(OUTPUT, out).map_err(|e| format!("can't write {OUTPUT}: {e}"))?;
     let mnemonics: std::collections::BTreeSet<_> = forms.iter().map(|f| &f.mnemonic).collect();
     Ok(format!(
-        "LLVM {version}, {} forms, {} mnemonics, {} operand classes, {} register names, {} directives",
+        "LLVM {version}, {} forms, {} mnemonics, {} operand classes, {} register names, {} directives, {}",
         forms.len(),
         mnemonics.len(),
         classes.len(),
         reg_names.len(),
-        directives.len()
+        directives.len(),
+        features.summary()
     ))
 }
 

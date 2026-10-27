@@ -11,4 +11,6 @@ workspace = true
 
 [dependencies]
 arm-syntax.workspace = true
+arm-isa.workspace = true
 arm-sema.workspace = true
+serde_json = "1.0.154"

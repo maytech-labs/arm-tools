@@ -19,6 +19,15 @@ The same file tells `armtool` and `armls` where to find `.include` files, search
 paths = ["include", "../shared"]   # relative to armtool.toml
 ```
 
+The CPU your build targets, so feature errors match it ([0022](decisions/0022-cpu-features.md)). Without this, it's what `clang -arch arm64` targets: apple-m1.
+
+```toml
+[target]
+cpu = "apple-m4"               # like -mcpu
+arch = "armv8.6-a"             # like -march: added to the CPU's features
+extensions = ["sve", "nolse"]  # like +sve and +nolse
+```
+
 And how `armtool fmt` and the editor lay code out ([0020](decisions/0020-formatter.md)):
 
 ```toml

@@ -36,7 +36,7 @@ Done when every instruction clang accepts in the corpus matches exactly one form
 - [x] Operand model: convert parsed operands to clang's (`v0.16b`, `[x0, #8]!`, lists, shifts)
 - [x] Predicates: 378 of 385 ported from AArch64AsmParser.cpp, the rest permissive ([0017](decisions/0017-operand-matching.md))
 - [x] Matcher: forms in clang's order and clang's near-miss messages; 0 disagreements with clang on 2,352 files
-- [ ] CPU feature checks (`instruction requires: sve2`), following `-march` and `.arch`
+- [x] CPU feature checks (`instruction requires: sve2`), following `.arch`, `.cpu`, `.arch_extension`, and `[target]` ([0022](decisions/0022-cpu-features.md))
 - [ ] Hand-written table of C++-parser aliases (`ubfx`, `bfi`, `bne`...) and SYS aliases, each tested against clang
 - [ ] Hover text: our descriptions in `crates/isa/data/descriptions.toml`, common instructions first
 

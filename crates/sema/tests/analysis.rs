@@ -199,6 +199,33 @@ fn suggestions_come_with_fixes() {
 }
 
 #[test]
+fn cpu_features_follow_directives() {
+    let codes = |text: &str| -> Vec<&'static str> {
+        Analysis::new(text)
+            .diagnostics()
+            .iter()
+            .map(|d| d.code)
+            .collect()
+    };
+    assert_eq!(codes("abs x0, x1\n"), ["missing-feature"]);
+    assert!(codes(".arch_extension cssc\nabs x0, x1\n").is_empty());
+    assert!(codes(".cpu apple-m4\nbfmmla v0.4s, v1.8h, v2.8h\n").is_empty());
+    assert_eq!(
+        codes(".arch armv8-a\nldaddal x0, x1, [x2]\n"),
+        ["missing-feature"]
+    );
+    // An .arch we can't read turns feature checks off rather than guessing.
+    assert!(codes(".arch armv99-z\nabs x0, x1\n").is_empty());
+    let analysis = Analysis::new("abs x0, x1\n");
+    let message = &analysis.diagnostics()[0].message;
+    assert!(
+        message.starts_with("instruction requires: cssc"),
+        "{message}"
+    );
+    assert!(message.contains(".arch_extension cssc"), "{message}");
+}
+
+#[test]
 fn unknown_instruction_after_include_is_a_warning() {
     let analysis = Analysis::new(".include \"macros.s\"\nmy_macro x0\n");
     let severities: Vec<_> = analysis.diagnostics().iter().map(|d| d.severity).collect();

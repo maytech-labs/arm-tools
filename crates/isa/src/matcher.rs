@@ -29,14 +29,30 @@ pub struct Mismatch {
 pub enum MatchResult {
     Matched(Form),
     Mismatch(Mismatch),
+    /// The operands fit a form, but it needs CPU features that aren't on.
+    /// Each inner list is one requirement, met by any of its features.
+    MissingFeatures {
+        form: Form,
+        needs: Vec<Vec<&'static str>>,
+    },
     /// The matcher can't judge this instruction: clang handles it in C++
     /// (SYS aliases, bitfield aliases, `lsl` by an immediate, `ldr =`).
     Unchecked,
 }
 
 /// Matches `operands` against the forms of `mnemonic`, generic syntax and
-/// Apple's NEON syntax, in clang's order.
+/// Apple's NEON syntax, in clang's order, ignoring CPU features.
 pub fn match_instruction(mnemonic: &Mnemonic, operands: &[Operand]) -> MatchResult {
+    match_for(mnemonic, operands, None)
+}
+
+/// Like [`match_instruction`], but a form only fits if `features` has what it
+/// needs, as clang decides with its target's features.
+pub fn match_for(
+    mnemonic: &Mnemonic,
+    operands: &[Operand],
+    features: Option<&crate::FeatureSet>,
+) -> MatchResult {
     if mnemonic.special().is_some() && mnemonic.special() != Some(Special::Bitfield) {
         return MatchResult::Unchecked;
     }
@@ -58,11 +74,18 @@ pub fn match_instruction(mnemonic: &Mnemonic, operands: &[Operand]) -> MatchResu
 
     let mut best: Option<Failure> = None;
     let mut any = false;
+    let mut needs_features: Option<(Form, Vec<Vec<&'static str>>)> = None;
     for form in forms(&mnemonic.head) {
         any = true;
         let classes: Vec<OperandClass> = form.operands().collect();
         match match_from(&classes, &all, 0, 0) {
-            Ok(()) => return MatchResult::Matched(form),
+            Ok(()) => {
+                let missing = features.map(|f| f.missing(form)).unwrap_or_default();
+                if missing.is_empty() {
+                    return MatchResult::Matched(form);
+                }
+                needs_features.get_or_insert((form, missing));
+            }
             Err(failure) => {
                 let failure = Failure { form, ..failure };
                 if best.as_ref().is_none_or(|b| failure.better_than(b)) {
@@ -70,6 +93,9 @@ pub fn match_instruction(mnemonic: &Mnemonic, operands: &[Operand]) -> MatchResu
                 }
             }
         }
+    }
+    if let Some((form, needs)) = needs_features {
+        return MatchResult::MissingFeatures { form, needs };
     }
     let Some(best) = best.filter(|_| any) else {
         return MatchResult::Unchecked;
@@ -615,6 +641,28 @@ mod tests {
     fn keywords_that_are_register_names() {
         assert!(matches!(
             match_instruction(&Mnemonic::parse("smstart"), &[reg("za")]),
+            MatchResult::Matched(_)
+        ));
+    }
+
+    #[test]
+    fn features_gate_forms() {
+        let ops = [reg("x0"), reg("x1")];
+        let apple = crate::FeatureSet::apple_default();
+        let abs = match_for(&Mnemonic::parse("abs"), &ops, Some(&apple));
+        assert!(
+            matches!(&abs, MatchResult::MissingFeatures { needs, .. } if needs == &[vec!["cssc"]]),
+            "{abs:?}"
+        );
+        let mut cssc = apple.clone();
+        cssc.modify("cssc").expect("known");
+        assert!(matches!(
+            match_for(&Mnemonic::parse("abs"), &ops, Some(&cssc)),
+            MatchResult::Matched(_)
+        ));
+        // Without a feature set, features aren't checked.
+        assert!(matches!(
+            match_instruction(&Mnemonic::parse("abs"), &ops),
             MatchResult::Matched(_)
         ));
     }

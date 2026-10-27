@@ -8,6 +8,7 @@
 //! `GPR64, GPR64, [, GPR64sp, SImm7s8, ], !`.
 
 mod docs;
+mod features;
 #[rustfmt::skip]
 mod generated;
 mod matcher;
@@ -17,8 +18,9 @@ mod predicates;
 mod tables;
 
 pub use docs::directive_description;
+pub use features::FeatureSet;
 use generated::*;
-pub use matcher::{MatchResult, Mismatch, match_instruction};
+pub use matcher::{MatchResult, Mismatch, match_for, match_instruction};
 pub use mnemonic::{CONDITION_CODES, Mnemonic, Special};
 pub use operand::{Check, Imm, Operand, RegisterOperand};
 pub use predicates::check;

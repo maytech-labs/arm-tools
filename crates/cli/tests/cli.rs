@@ -246,6 +246,29 @@ fn fix_applies_suggestions_and_reports_whats_left() {
 }
 
 #[test]
+fn target_features_follow_the_config() {
+    let dir = Dir::new("target");
+    // cssc isn't in apple-m1, so abs on a general register is an error...
+    dir.file("a.s", ".globl _f\n_f:\n    abs x0, x1\n    ret\n");
+    let output = armtool(&["check", "a.s"], &dir.0);
+    assert!(
+        stdout(&output).contains("instruction requires: cssc"),
+        "{}",
+        stdout(&output)
+    );
+    // ...until the target has it.
+    dir.file("armtool.toml", "[target]\nextensions = [\"cssc\"]\n");
+    assert_eq!(armtool(&["check", "a.s"], &dir.0).status.code(), Some(0));
+    // A directive in the file works too.
+    dir.file(
+        "b.s",
+        ".arch_extension cssc\n.globl _f\n_f:\n    abs x0, x1\n    ret\n",
+    );
+    let _ = std::fs::remove_file(dir.0.join("armtool.toml"));
+    assert_eq!(armtool(&["check", "b.s"], &dir.0).status.code(), Some(0));
+}
+
+#[test]
 fn rules_and_explain() {
     let dir = Dir::new("rules");
     let output = armtool(&["rules"], &dir.0);

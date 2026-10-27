@@ -8,6 +8,11 @@
 //! [include]
 //! paths = ["include", "../shared"]   # relative to this file
 //!
+//! [target]                         # like -mcpu, -march, and +ext
+//! cpu = "apple-m4"
+//! arch = "armv8.6-a"
+//! extensions = ["sve", "nolse"]
+//!
 //! [format]
 //! indent = 4
 //! mnemonic_width = 8
@@ -33,12 +38,14 @@ pub enum Level {
     Off,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     levels: HashMap<String, Level>,
     /// Directories to search for `.include` files, as written.
     include: Vec<PathBuf>,
     pub format: arm_syntax::FormatOptions,
+    /// The CPU features the build enables, from `[target]`.
+    pub features: arm_isa::FeatureSet,
     /// Where it was read from, if anywhere.
     pub path: Option<PathBuf>,
 }
@@ -52,6 +59,39 @@ struct File {
     include: IncludeSection,
     #[serde(default)]
     format: FormatSection,
+    #[serde(default)]
+    target: TargetSection,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct TargetSection {
+    cpu: Option<String>,
+    arch: Option<String>,
+    #[serde(default)]
+    extensions: Vec<String>,
+}
+
+impl TargetSection {
+    /// Features as clang's driver builds them on Darwin: the CPU's (apple-m1
+    /// unless set), plus the architecture's, then each extension.
+    fn features(&self) -> Result<arm_isa::FeatureSet, String> {
+        let mut set = match &self.cpu {
+            Some(cpu) => {
+                arm_isa::FeatureSet::for_cpu(cpu).map_err(|e| format!("[target] cpu: {e}"))?
+            }
+            None => arm_isa::FeatureSet::apple_default(),
+        };
+        if let Some(arch) = &self.arch {
+            set.add_arch(arch)
+                .map_err(|e| format!("[target] arch: {e}"))?;
+        }
+        for extension in &self.extensions {
+            set.modify(extension)
+                .map_err(|e| format!("[target] extensions: {e}"))?;
+        }
+        Ok(set)
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -72,6 +112,19 @@ struct IncludeSection {
 
 pub const FILE_NAME: &str = "armtool.toml";
 
+impl Default for Config {
+    /// No file: every rule at its default level, clang's default target.
+    fn default() -> Self {
+        Config {
+            levels: HashMap::new(),
+            include: Vec::new(),
+            format: arm_syntax::FormatOptions::default(),
+            features: arm_isa::FeatureSet::apple_default(),
+            path: None,
+        }
+    }
+}
+
 impl Config {
     /// Parses a config file's text. Unknown rule IDs and levels are errors
     /// that say what's valid.
@@ -89,6 +142,7 @@ impl Config {
                 return Err(message);
             }
         }
+        let features = file.target.features()?;
         let defaults = arm_syntax::FormatOptions::default();
         let f = file.format;
         Ok(Config {
@@ -100,6 +154,7 @@ impl Config {
                 comment_column: f.comment_column.unwrap_or(defaults.comment_column),
                 max_blank_lines: f.max_blank_lines.unwrap_or(defaults.max_blank_lines),
             },
+            features,
             path: None,
         })
     }
@@ -188,6 +243,18 @@ mod tests {
         assert!(level.contains("Levels are"), "{level}");
         let section = Config::parse("[rulez]\n").unwrap_err();
         assert!(!section.is_empty());
+    }
+
+    #[test]
+    fn target_features() {
+        let config = Config::parse("[target]\ncpu = \"apple-m4\"\nextensions = [\"nolse\"]\n")
+            .expect("valid");
+        assert!(config.features.has("sme") && !config.features.has("lse"));
+        let arch = Config::parse("[target]\narch = \"armv8.6-a\"\n").expect("valid");
+        assert!(arch.features.has("bf16") && arch.features.has("aes"));
+        assert!(Config::default().features.has("lse"));
+        let bad = Config::parse("[target]\ncpu = \"pentium\"\n").unwrap_err();
+        assert!(bad.contains("[target] cpu: unknown CPU 'pentium'"), "{bad}");
     }
 
     #[test]

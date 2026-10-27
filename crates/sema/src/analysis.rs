@@ -7,7 +7,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use arm_isa::{CONDITION_CODES, Mnemonic};
+use arm_isa::{CONDITION_CODES, FeatureSet, Mnemonic};
 use arm_syntax::ast::{self, Statement};
 use arm_syntax::{NodeOrToken, Parse, SyntaxKind, SyntaxNode, SyntaxToken};
 
@@ -123,23 +123,47 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    /// Analyzes a file on its own: `.include` isn't followed.
+    /// Analyzes a file on its own: `.include` isn't followed, and CPU
+    /// features start as clang's default for `-arch arm64`.
     pub fn new(text: &str) -> Analysis {
-        Analysis::build(text, None, Vec::new())
+        Analysis::with_options(text, None, None, Some(FeatureSet::apple_default()))
     }
 
     /// Analyzes a file, following `.include` through `resolver` and importing
     /// what included files define: macros, constants, register aliases, and
     /// labels. `path` is this file's, to detect include cycles.
     pub fn with_includes(text: &str, path: Option<PathBuf>, resolver: &dyn Resolver) -> Analysis {
-        Analysis::build(text, Some(resolver), path.into_iter().collect())
+        Analysis::with_options(
+            text,
+            path,
+            Some(resolver),
+            Some(FeatureSet::apple_default()),
+        )
     }
 
-    fn build(text: &str, resolver: Option<&dyn Resolver>, stack: Vec<PathBuf>) -> Analysis {
+    /// The general form: an optional resolver for `.include`, and the CPU
+    /// features enabled at the top of the file, as `-mcpu` or `-march` would
+    /// set them. `None` turns feature checks off.
+    pub fn with_options(
+        text: &str,
+        path: Option<PathBuf>,
+        resolver: Option<&dyn Resolver>,
+        features: Option<FeatureSet>,
+    ) -> Analysis {
+        Analysis::build(text, resolver, path.into_iter().collect(), features)
+    }
+
+    fn build(
+        text: &str,
+        resolver: Option<&dyn Resolver>,
+        stack: Vec<PathBuf>,
+        features: Option<FeatureSet>,
+    ) -> Analysis {
         let parse = arm_syntax::parse(text);
         let mut builder = Builder {
             resolver,
             stack,
+            features,
             symbols: Vec::new(),
             items: Vec::new(),
             pending: Vec::new(),
@@ -274,6 +298,9 @@ struct Pending {
 
 struct Builder<'r> {
     resolver: Option<&'r dyn Resolver>,
+    /// CPU features enabled here, changed by `.arch`, `.cpu`, and
+    /// `.arch_extension`. None when we can't tell: no checks then.
+    features: Option<FeatureSet>,
     /// Paths of the files including this one, outermost first, and this one.
     stack: Vec<PathBuf>,
     symbols: Vec<Symbol>,
@@ -518,6 +545,40 @@ impl Builder<'_> {
         }
         match name.as_str() {
             ".include" => self.include(directive, &args, &name_token),
+            ".arch" | ".cpu" => {
+                // The spec as written, like `armv8.5-a+sve`.
+                let spec: String = directive
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .split_once(char::is_whitespace)
+                    .map(|(_, rest)| {
+                        rest.split([';', '/'])
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .to_string()
+                    })
+                    .unwrap_or_default();
+                let set = if name == ".arch" {
+                    FeatureSet::for_arch(&spec)
+                } else {
+                    FeatureSet::for_cpu(&spec)
+                };
+                self.features = set.ok();
+            }
+            ".arch_extension" => {
+                let mut ok = true;
+                for arg in &args {
+                    let text = arg.text().to_string();
+                    if let Some(features) = self.features.as_mut() {
+                        ok &= features.modify(text.trim()).is_ok();
+                    }
+                }
+                if !ok {
+                    self.features = None;
+                }
+            }
             ".set" | ".equ" | ".equiv" => {
                 if let Some(constant) = &first_name {
                     self.define_constant(constant, directive.syntax(), name == ".equiv");
@@ -615,7 +676,7 @@ impl Builder<'_> {
         }
         let mut stack = self.stack.clone();
         stack.push(path.clone());
-        let included = Analysis::build(&text, self.resolver, stack);
+        let included = Analysis::build(&text, self.resolver, stack, self.features.clone());
         let origin = Arc::new(Origin { path, text });
         for symbol in included.symbols {
             let importable = match symbol.kind {
@@ -686,10 +747,27 @@ impl Builder<'_> {
         };
         let flat = operands::flatten(insn, &scope)?;
         let parsed = Mnemonic::parse(mnemonic.text());
-        let arm_isa::MatchResult::Mismatch(mismatch) =
-            arm_isa::match_instruction(&parsed, &flat.operands)
-        else {
-            return Some(flat);
+        let mismatch = match arm_isa::match_for(&parsed, &flat.operands, self.features.as_ref()) {
+            arm_isa::MatchResult::Mismatch(mismatch) => mismatch,
+            arm_isa::MatchResult::MissingFeatures { needs, .. } => {
+                let wanted: Vec<String> = needs.iter().map(|any| any.join(" or ")).collect();
+                let first = needs
+                    .first()
+                    .and_then(|any| any.first())
+                    .copied()
+                    .unwrap_or("");
+                let end = flat.ranges.last().map_or(range(mnemonic).end, |r| r.end);
+                self.diagnostics.push(Diagnostic::error(
+                    range(mnemonic).start..end,
+                    "missing-feature",
+                    format!(
+                        "instruction requires: {}. Enable it with .arch_extension {first} above this line, or set the target in armtool.toml if your build uses -mcpu or -march",
+                        wanted.join(", ")
+                    ),
+                ));
+                return Some(flat);
+            }
+            _ => return Some(flat),
         };
         let at = match mismatch.operand {
             Some(i) => flat.ranges[i].clone(),

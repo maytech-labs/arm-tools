@@ -173,7 +173,12 @@ fn run(args: &[String], lint: bool) -> ExitCode {
             open: Default::default(),
         };
         let diagnose = |text: &str| {
-            let analysis = Analysis::with_includes(text, Some(path.clone()), &resolver);
+            let analysis = Analysis::with_options(
+                text,
+                Some(path.clone()),
+                Some(&resolver),
+                Some(config.features.clone()),
+            );
             let mut diagnostics: Vec<Diagnostic> = analysis.diagnostics().to_vec();
             if lint {
                 diagnostics.extend(arm_lint::lint(&analysis, &config));

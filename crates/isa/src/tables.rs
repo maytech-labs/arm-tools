@@ -75,3 +75,14 @@ pub(crate) struct FormInfo {
     /// Start and length in `OPERANDS`.
     pub operands: (u32, u16),
 }
+
+pub(crate) struct FeatureDef {
+    /// The `-target-feature` name: `sve`, `v8.5a`.
+    pub name: &'static str,
+    /// The name `.arch_extension` and `-march=...+ext` take, if any: `sve`, `fp16`.
+    pub user: &'static str,
+    /// Indices into `FEATURE_DEFS` this feature turns on too.
+    pub implies: &'static [u16],
+    /// For architecture versions: extensions on by default.
+    pub default_exts: &'static [u16],
+}
