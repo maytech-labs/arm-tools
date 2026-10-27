@@ -131,6 +131,12 @@ pub(crate) const RULES: &[RuleInfo] = &[
         explanation: "`armtool:` comments declare types: `fn name(x0: T, ...) -> T` for a function, or `x9: T` for a register here. Types are i8 to i64, u8 to u64, f32, f64, ptr, and ptr<T>. See docs/types.md.",
     },
     RuleInfo {
+        id: "flow/dead-store",
+        default_level: Level::Warning,
+        summary: "A register set and never read",
+        explanation: "On every path from here, the register is overwritten or the function returns before anything reads it, so the instruction does nothing useful. It's often a typo for another register, or a leftover. Remove it, or use the value. Loads, stores, compares, calls, and the frame registers x29, x30, and sp aren't reported.",
+    },
+    RuleInfo {
         id: "abi/syscall-number",
         default_level: Level::Warning,
         summary: "svc without the syscall number in x16 (Darwin) or x8 (Linux)",
@@ -184,6 +190,11 @@ pub(crate) fn run(analysis: &Analysis, externals: &crate::CDefinitions) -> Vec<F
             continue;
         }
         frame(function, &insns, darwin, &mut out);
+        let exported = analysis
+            .symbols()
+            .iter()
+            .any(|s| s.name == function.name && s.exported);
+        dead_stores(analysis, &cfg, &reached, exported, &mut out);
         undefined_registers(analysis, &cfg, function, entry, &mut out);
         callee_saved(function, &insns, &mut out);
         callee_saved_restore(analysis, &cfg, function, entry, &insns, &mut out);
@@ -756,6 +767,143 @@ fn callee_saved_restore(
     }
 }
 
+/// Register writes nothing reads, by backward liveness over the function.
+/// A helper that isn't exported may return values in any register, by its
+/// own convention; only exported functions are held to the ABI's.
+fn dead_stores(
+    analysis: &Analysis,
+    cfg: &Cfg,
+    reached: &[usize],
+    exported: bool,
+    out: &mut Vec<Finding>,
+) {
+    use std::collections::BTreeSet;
+    type Live = BTreeSet<String>;
+    let platform = analysis.platform();
+    let x =
+        |range: std::ops::RangeInclusive<u32>| range.map(|n| format!("x{n}")).collect::<Vec<_>>();
+    let v =
+        |range: std::ops::RangeInclusive<u32>| range.map(|n| format!("v{n}")).collect::<Vec<_>>();
+    let everything: Live = x(0..=30)
+        .into_iter()
+        .chain(v(0..=31))
+        .chain(["sp".to_string()])
+        .collect();
+    // What a caller can see after a return: results, and what the ABI
+    // preserves.
+    let at_return: Live = x(0..=1)
+        .into_iter()
+        .chain(v(0..=3))
+        .chain(x(19..=30))
+        .chain(v(8..=15))
+        .chain(["sp".to_string()])
+        .collect();
+    // What a call or system call may read: its arguments.
+    let arguments: Live = x(0..=8)
+        .into_iter()
+        .chain(v(0..=7))
+        .chain(["x16".to_string()])
+        .collect();
+    let mut live_in: HashMap<usize, Live> = HashMap::new();
+    let live_out = |i: usize, live_in: &HashMap<usize, Live>| -> Live {
+        let insn = cfg.insns[i];
+        let successors = cfg.successors(analysis, i);
+        let mut live: Live = successors
+            .next
+            .iter()
+            .flat_map(|s| live_in.get(s).cloned().unwrap_or_default())
+            .collect();
+        let head = insn.mnemonic.head.as_str();
+        let returns = matches!(head, "ret" | "retaa" | "retab");
+        // Running off the end into whatever follows.
+        let runs_off =
+            successors.next.is_empty() && !successors.exits && !flow::is_terminator(insn);
+        let leaves_unseen = runs_off
+            || (returns && !exported)
+            || successors.exits && !returns
+            // A conditional branch to code outside the function.
+            || (flow::target(analysis, insn).is_none()
+                && (insn.mnemonic.condition.is_some()
+                    || matches!(head, "cbz" | "cbnz" | "tbz" | "tbnz")));
+        if leaves_unseen {
+            live.extend(everything.iter().cloned());
+        } else if returns {
+            live.extend(at_return.iter().cloned());
+        }
+        live
+    };
+    // Grow to a fixed point, latest instructions first.
+    let mut order: Vec<usize> = reached.to_vec();
+    order.sort_unstable_by(|a, b| b.cmp(a));
+    loop {
+        let mut changed = false;
+        for &i in &order {
+            let insn = cfg.insns[i];
+            let mut live = live_out(i, &live_in);
+            for written in flow::writes(insn) {
+                live.remove(&written);
+            }
+            live.extend(flow::reads(insn, platform));
+            // A call reads its arguments; a helper in this file may read
+            // anything, by its own convention.
+            if calls_local_helper(analysis, insn) {
+                live.extend(everything.iter().cloned());
+            } else if flow::is_call(insn) || insn.mnemonic.head == "svc" {
+                live.extend(arguments.iter().cloned());
+            }
+            if live_in.get(&i) != Some(&live) {
+                live_in.insert(i, live);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut ordered = reached.to_vec();
+    ordered.sort_unstable();
+    for i in ordered {
+        let insn = cfg.insns[i];
+        let head = insn.mnemonic.head.as_str();
+        // Instructions that matter for more than their register.
+        let effects = head.starts_with("ld")
+            || head.starts_with("st")
+            || matches!(head, "swp" | "mrs" | "sys" | "sysl" | "svc" | "hvc" | "smc")
+            || head.starts_with("cas")
+            || head.starts_with("swp")
+            || flow::is_call(insn)
+            || flow::sets_flags(insn, platform)
+            || insn.operands.is_none();
+        if effects {
+            continue;
+        }
+        let live = live_out(i, &live_in);
+        let Some(first) = operands(insn).first() else {
+            continue;
+        };
+        for written in flow::writes(insn) {
+            if matches!(written.as_str(), "x29" | "x30" | "sp") || live.contains(&written) {
+                continue;
+            }
+            let shown = match first {
+                Operand::Register(r)
+                    if flow::register_id(first).as_deref() == Some(written.as_str()) =>
+                {
+                    r.register.name().to_string()
+                }
+                _ => written.clone(),
+            };
+            out.push(finding(
+                "flow/dead-store",
+                insn.range.clone(),
+                format!(
+                    "{shown} is set here but never read: every path overwrites it or returns first. Remove this, or use the value"
+                ),
+            ));
+        }
+    }
+}
+
 /// Flag reads that a call may have clobbered on some path since the flags
 /// were last set.
 fn flags_clobbered(analysis: &Analysis, cfg: &Cfg, entry: usize, out: &mut Vec<Finding>) {
@@ -1136,8 +1284,7 @@ _main:
                 ("abi/callee-saved", "mov d8, d0".into())
             ]
         );
-        let saved =
-            ".globl _f\n_f:\n  str x19, [sp, #-16]!\n  mov x19, x0\n  ldr x19, [sp], #16\n  ret\n";
+        let saved = ".globl _f\n_f:\n  str x19, [sp, #-16]!\n  mov x19, x0\n  add x0, x19, #1\n  ldr x19, [sp], #16\n  ret\n";
         assert!(rules(saved).is_empty());
     }
 
@@ -1280,7 +1427,7 @@ _main:
     #[test]
     fn linux_rules() {
         // x18 is free, and a frame pointer optional; x30 still needs saving.
-        let ok = ".globl main\nmain:\n  str x30, [sp, #-16]!\n  mov x18, #1\n  bl puts\n  ldr x30, [sp], #16\n  ret\n";
+        let ok = ".globl main\nmain:\n  str x30, [sp, #-16]!\n  mov x18, #1\n  mov x0, x18\n  bl puts\n  ldr x30, [sp], #16\n  ret\n";
         assert_eq!(linux(ok), []);
         let darwin: Vec<&str> = rules(ok);
         assert!(darwin.contains(&"abi/x18-reserved") && darwin.contains(&"abi/frame-pointer"));
@@ -1374,10 +1521,10 @@ _main:
             "{found:?}"
         );
         // Restored on every path: fine.
-        let good = ".globl _f\n_f:\n  stp x19, x20, [sp, #-16]!\n  mov x19, x0\n  cbz x0, 1f\n  mov x0, #1\n1:\n  ldp x19, x20, [sp], #16\n  ret\n";
+        let good = ".globl _f\n_f:\n  stp x19, x20, [sp, #-16]!\n  mov x19, x0\n  cbz x0, 1f\n  add x0, x19, #1\n1:\n  ldp x19, x20, [sp], #16\n  ret\n";
         assert_eq!(findings(good), []);
         // Restored with ldr from the frame pointer, or a d register.
-        let fp = ".globl _f\n_f:\n  stp x29, x30, [sp, #-32]!\n  mov x29, sp\n  str d8, [x29, #16]\n  fmov d8, x0\n  ldr d8, [x29, #16]\n  ldp x29, x30, [sp], #32\n  ret\n";
+        let fp = ".globl _f\n_f:\n  stp x29, x30, [sp, #-32]!\n  mov x29, sp\n  str d8, [x29, #16]\n  fmov d8, x0\n  fadd d0, d8, d8\n  ldr d8, [x29, #16]\n  ldp x29, x30, [sp], #32\n  ret\n";
         assert_eq!(findings(fp), []);
         // Never saved at all is abi/callee-saved, not this.
         let never = ".globl _f\n_f:\n  mov x19, x0\n  ret\n";
@@ -1468,6 +1615,30 @@ _main:
         // Darwin's svc sets the carry flag for errors.
         let svc = ".globl _f\n_f:\n  mov x16, #4\n  svc #0x80\n  b.cs 1f\n  ret\n1:\n  neg x0, x0\n  ret\n";
         assert_eq!(rules(svc), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn dead_stores() {
+        let dead = ".globl _f\n_f:\n  mov x9, #1\n  mov x9, #2\n  add x0, x9, #1\n  ret\n";
+        assert_eq!(
+            findings(dead),
+            [("flow/dead-store", "mov x9, #1".to_string())]
+        );
+        // Overwritten on one path only: live.
+        let maybe = ".globl _f\n_f:\n  mov x9, #1\n  cbz x0, 1f\n  mov x9, #2\n1:\n  add x0, x9, #1\n  ret\n";
+        assert_eq!(rules(maybe), Vec::<&str>::new());
+        // Results, callee-saved registers, and arguments to calls are read.
+        let fine = ".globl _f\n_f:\n  stp x29, x30, [sp, #-16]!\n  mov x29, sp\n  mov x1, #3\n  bl _g\n  mov x0, #0\n  mov x1, #0\n  ldp x29, x30, [sp], #16\n  ret\n";
+        assert_eq!(rules(fine), Vec::<&str>::new());
+        // movk and lane inserts keep the rest of the register.
+        let pieces = ".globl _f\n_f:\n  movz x0, #1\n  movk x0, #2, lsl #16\n  ret\n";
+        assert_eq!(rules(pieces), Vec::<&str>::new());
+        // Loads, compares, and the frame registers aren't reported.
+        let quiet = ".globl _f\n_f:\n  ldr x9, [x0]\n  subs x10, x0, #1\n  b.eq 1f\n1:\n  mov x29, sp\n  ret\n";
+        assert_eq!(rules(quiet), Vec::<&str>::new());
+        // A tail call may read anything.
+        let tail = ".globl _f\n_f:\n  mov x5, #1\n  b _g\n";
+        assert_eq!(rules(tail), Vec::<&str>::new());
     }
 
     #[test]

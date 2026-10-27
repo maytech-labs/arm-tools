@@ -44,6 +44,7 @@ helper:
         .globl  _syscall
         .p2align 2
 _syscall:
+        mov     x0, #1                      ; never read: overwritten on the next line
         mov     x0, #0
         mov     x8, #93                     ; Linux habit: the number goes in x16 on macOS
         svc     #0x80                       ; svc without x16 set

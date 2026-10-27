@@ -368,10 +368,11 @@ fn lint_codes(text: &str, config: Option<&str>) -> Vec<(String, u64)> {
 
 #[test]
 fn lint_rules_run_with_the_nearest_config() {
-    let text = ".globl _f\n_f:\n    mov x18, #1\n    ret\n";
+    let text = ".globl _f\n_f:\n    mov x18, #1\n    mov x0, x18\n    ret\n";
     assert_eq!(
         lint_codes(text, None),
-        [("abi/x18-reserved".to_string(), 2)]
+        vec![("abi/x18-reserved".to_string(), 2); 2],
+        "both uses of x18"
     );
     let off = "[rules]\n\"abi/x18-reserved\" = \"off\"\n";
     assert_eq!(lint_codes(text, Some(off)), Vec::<(String, u64)>::new());
@@ -769,7 +770,7 @@ fn linux_project() {
     )
     .expect("config");
     // Nothing in the text says Linux; the config does.
-    let main = ".globl main\nmain:\n    mov x18, #1 ; mov x8, #93\n    svc #0\n    adrp x0, msg\n    add x0, x0, :lo12:msg\n    ret\nmsg: .asciz \"hi\"\n";
+    let main = ".globl main\nmain:\n    mov x18, #1 ; mov x8, #93\n    svc #0\n    adrp x0, msg\n    add x0, x0, :lo12:msg\n    add x0, x0, x18\n    ret\nmsg: .asciz \"hi\"\n";
     std::fs::write(root.join("main.s"), main).expect("write");
     let root_uri = format!("file://{}", root.display());
     let uri = format!("{root_uri}/main.s");

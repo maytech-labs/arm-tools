@@ -10,7 +10,7 @@ use std::process::{Command, Output};
 use serde_json::Value;
 
 const CLEAN: &str = ".globl _f\n_f:\n    mov x0, #1\n    ret\n";
-const LINTY: &str = ".globl _f\n_f:\n    mov x18, #1\n    ret\n";
+const LINTY: &str = ".globl _f\n_f:\n    mov x18, #1\n    add x0, x0, x18\n    ret\n";
 const BROKEN: &str = ".globl _f\n_f:\n    add x0, x0, #5000\n    ret\n";
 
 struct Dir(PathBuf);
@@ -161,7 +161,7 @@ fn allow_comments() {
     let dir = Dir::new("allow");
     dir.file(
         "a.s",
-        ".globl _f\n_f:\n    mov x18, #1 ; armtool: allow(abi/x18-reserved)\n    ret\n",
+        ".globl _f\n_f:\n    mov x18, #1 ; armtool: allow(abi/x18-reserved)\n    add x0, x0, x18\n    ret\n",
     );
     assert_eq!(armtool(&["lint", "a.s"], &dir.0).status.code(), Some(0));
 }
@@ -231,18 +231,21 @@ fn fix_applies_suggestions_and_reports_whats_left() {
     let dir = Dir::new("fix");
     let file = dir.file(
         "a.s",
-        ".globl _f\n_f:\n    movv x0, x1\n    sub sp, sp, #24\n    add sp, sp, #32\n    mov x18, #1\n    ret\n",
+        ".globl _f\n_f:\n    movv x0, x1\n    sub sp, sp, #24\n    add sp, sp, #32\n    mov x18, #1\n    add x0, x0, x18\n    ret\n",
     );
     let output = armtool(&["lint", "--fix", "a.s"], &dir.0);
     assert_eq!(
         std::fs::read_to_string(&file).expect("read"),
-        ".globl _f\n_f:\n    mov x0, x1\n    sub sp, sp, #32\n    add sp, sp, #32\n    mov x18, #1\n    ret\n"
+        ".globl _f\n_f:\n    mov x0, x1\n    sub sp, sp, #32\n    add sp, sp, #32\n    mov x18, #1\n    add x0, x0, x18\n    ret\n"
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("fixed 2"));
-    // x18 has no automatic fix, so it's still reported.
+    // x18 has no automatic fix, so both its uses are still reported.
     let text = stdout(&output);
-    assert_eq!(text.lines().count(), 1, "{text}");
-    assert!(text.contains("abi/x18-reserved"));
+    assert_eq!(text.lines().count(), 2, "{text}");
+    assert!(
+        text.lines().all(|l| l.contains("abi/x18-reserved")),
+        "{text}"
+    );
 }
 
 #[test]

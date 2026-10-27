@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn config_turns_rules_off_and_changes_severity() {
-        let analysis = Analysis::new(".globl _f\n_f:\n    mov x18, #1\n    ret\n");
+        let analysis = Analysis::new(".globl _f\n_f:\n    mov x18, #1\n    mov x0, x18\n    ret\n");
         let off = Config::parse("[rules]\n\"abi/x18-reserved\" = \"off\"\n").expect("valid");
         assert!(lint(&analysis, &off).is_empty());
         let error = Config::parse("[rules]\n\"abi/x18-reserved\" = \"error\"\n").expect("valid");

@@ -374,6 +374,9 @@ pub(crate) fn writes(insn: &Instruction) -> Vec<String> {
         let pair = matches!(head, "ldp" | "ldnp" | "ldpsw" | "ldxp" | "ldaxp" | "ldiapp");
         out.extend(registers.iter().take(if pair { 2 } else { 1 }).cloned());
     }
+    if head.starts_with("ld") {
+        out.extend(ops.iter().flat_map(list_registers));
+    }
     if let Some(base) = writeback_base(ops) {
         out.push(base);
     }
@@ -432,7 +435,70 @@ pub(crate) fn reads(insn: &Instruction, platform: arm_isa::Platform) -> Vec<Stri
     if head == "ret" && ops.is_empty() {
         out.push("x30".into());
     }
+    // Instructions that keep part of their destination read it too.
+    if keeps_destination(head, ops)
+        && let Some(dest) = ops.first().and_then(register_id)
+    {
+        out.push(dest);
+    }
+    // `{v0.4s, v1.4s}`: a store or table lookup reads the list.
+    if !head.starts_with("ld") {
+        out.extend(ops.iter().flat_map(list_registers));
+    }
     out
+}
+
+/// Instructions that write only part of their destination, or accumulate
+/// into it, so its old value matters.
+fn keeps_destination(head: &str, ops: &[Operand]) -> bool {
+    const ACCUMULATE: &[&str] = &[
+        "movk", "bfi", "bfxil", "bfm", "bfc", "fmla", "fmls", "mla", "mls", "bsl", "bit", "bif",
+        "sli", "sri", "ins", "umlal", "umlal2", "smlal", "smlal2", "umlsl", "umlsl2", "smlsl",
+        "smlsl2", "sdot", "udot", "usdot", "sudot", "fmlal", "fmlal2", "fmlsl", "fmlsl2", "bfdot",
+        "bfmmla", "bfmlalb", "bfmlalt", "smmla", "ummla", "usmmla", "sqrdmlah", "sqrdmlsh",
+        "fcmla", "sqdmlal", "sqdmlal2", "sqdmlsl", "sqdmlsl2", "sadalp", "uadalp", "usra", "ssra",
+        "ursra", "srsra", "saba", "uaba", "sabal", "sabal2", "uabal", "uabal2", "tbx", "xtn2",
+        "sqxtn2", "uqxtn2", "sqxtun2", "shrn2", "rshrn2", "fcvtn2", "fcvtxn2",
+    ];
+    if ACCUMULATE.contains(&head) {
+        return true;
+    }
+    // `mov v0.s[1], w0` writes one lane: an index before the source.
+    let source = ops
+        .iter()
+        .skip(1)
+        .position(|o| matches!(o, Operand::Register(_)))
+        .map_or(ops.len(), |p| p + 1);
+    matches!(head, "mov" | "ld1" | "ld2" | "ld3" | "ld4")
+        && ops[..source.min(ops.len())]
+            .iter()
+            .any(|o| matches!(o, Operand::VectorIndex(_)))
+}
+
+/// The registers of a vector list: `{v0.4s, v1.4s}` is v0 and v1.
+pub(crate) fn list_registers(operand: &Operand) -> Vec<String> {
+    let Operand::VectorList {
+        first,
+        count,
+        stride,
+        ..
+    } = operand
+    else {
+        return Vec::new();
+    };
+    if first.kind() != RegisterKind::NeonVector {
+        return Vec::new();
+    }
+    let llvm = first.llvm_name();
+    let Ok(n) = llvm
+        .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+        .parse::<u32>()
+    else {
+        return Vec::new();
+    };
+    (0..*count)
+        .map(|k| format!("v{}", (n + k * stride) % 32))
+        .collect()
 }
 
 /// The registers an instruction stores to memory.

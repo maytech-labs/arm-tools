@@ -71,6 +71,7 @@ fn mistakes_shows_each_problem() {
         "flow/unbalanced-stack",
         "flow/unreachable",
         "flow/flags-clobbered",
+        "flow/dead-store",
         "types/memory",
         "types/signedness",
         "types/call",

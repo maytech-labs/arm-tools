@@ -74,3 +74,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Structs in types: `armtool: struct name { ... }` with C's layout; loads, stores, and pointer arithmetic through a struct pointer are checked against its fields, and `types/layout` checks `struct_field` offset constants.
 - Structs from C: struct and typedef definitions in the project's C files type the assembly that uses them, with no annotation.
 - Quick fixes for type findings: insert `sxtw`, swap a signed condition for its unsigned counterpart (or `sdiv` and `udiv`), use X registers for a pointer, and correct an offset constant.
+- Lint: `flow/dead-store` finds register writes nothing reads. The dataflow now knows that `movk`, `bfi`, accumulating NEON instructions, and lane moves read their destination, and that vector lists (`{v0.4s, v1.4s}`) are read by stores and written by loads.

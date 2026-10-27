@@ -112,7 +112,7 @@ Done when the first rules in the design run in `armls` and `armtool lint`, each 
 - [x] Struct layouts and field offsets ([0041](decisions/0041-structs.md))
 - [x] Struct definitions from C headers ([0042](decisions/0042-c-structs.md))
 - [x] Values lost across calls: scratch and argument registers after a call, and callee-saved registers not restored on every path
-- [ ] Register liveness: dead stores
+- [x] Register liveness: dead stores (`flow/dead-store`)
 - [ ] Darwin syscall argument checks by syscall number
 
 ## M8: distribution

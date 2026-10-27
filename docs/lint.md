@@ -155,6 +155,20 @@ x9 to x17 and v16 to v31 hold nothing useful when a function starts, and every c
 
 Default level: warning.
 
+### `flow/dead-store`
+
+A register set and never read
+
+On every path from here, the register is overwritten or the function returns before anything reads it, so the instruction does nothing useful. It's often a typo for another register, or a leftover. Remove it, or use the value. Loads, stores, compares, calls, and the frame registers x29, x30, and sp aren't reported.
+
+```asm
+    mov     x9, #1          ; dead: overwritten below before any read
+    mov     x9, #2
+    add     x0, x9, #1
+```
+
+Default level: warning.
+
 ### `flow/flags-clobbered`
 
 Reads the condition flags after a call that may have changed them
