@@ -2,7 +2,7 @@
 
 Tools for writing AArch64 assembly on macOS and Linux: a language server, a linter, and a formatter, built on one parser and one model of the instruction set.
 
-> **Status: pre-release.** The language server is feature complete for its first release, and `armtool` works: errors as you type in clang's words, operand checking, 17 lint rules, and everything below. See the [roadmap](docs/roadmap.md).
+> **Status: pre-release.** The language server is feature complete for its first release, and `armtool` works: errors as you type in clang's words, operand checking, 22 lint rules, optional types, and everything below. See the [roadmap](docs/roadmap.md).
 
 Apple silicon comes first. By default it targets the assembly Apple's toolchain accepts: `clang -c -arch arm64`, Mach-O, the Darwin ABI. That means `_`-prefixed symbols, `@PAGE` and `@PAGEOFF`, `;` comments, `%%` separators, and x18 reserved for the OS.
 
@@ -19,6 +19,8 @@ platform = "linux"
 | `armtool lint` | The linter, for the terminal and CI. The same rules show up in your editor through `armls`. |
 | `armtool check` | Syntax, symbol, and operand errors without assembling, as clang reports them |
 | `armtool fmt` | Formatter: aligns mnemonics, operands, and comments, changing only whitespace |
+
+With a few comments, it checks types too: `; armtool: fn _sum(x0: ptr<i32>, x1: u64) -> i64` declares a function, and the linter follows pointers, widths, and signedness from there ([docs/types.md](docs/types.md)).
 
 The linter goes past syntax: ABI rules (callee-saved registers, x18, stack alignment, frame records), `adrp` without its `@PAGEOFF`, stacks left unbalanced on some path, and unreachable code. [docs/lint.md](docs/lint.md) has every rule and how to configure them.
 

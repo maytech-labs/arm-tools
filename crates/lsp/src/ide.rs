@@ -42,7 +42,11 @@ pub fn hover(analysis: &Analysis, offset: usize) -> Option<Hover> {
             if let Some(symbol) = analysis.symbol_at(offset) {
                 symbol_hover(analysis, &analysis.symbols()[symbol])
             } else if token.kind() == SyntaxKind::Ident {
-                register_hover(token.text(), analysis.platform())?
+                let mut text = register_hover(token.text(), analysis.platform())?;
+                if let Some(ty) = register_type(analysis, offset, token.text()) {
+                    text = format!("{text}\n\nType here: `{ty}`");
+                }
+                text
             } else {
                 return None;
             }
@@ -152,6 +156,29 @@ fn register_hover(text: &str, platform: Platform) -> Option<String> {
     let base = text.split('.').next().unwrap_or(text);
     let register = Register::lookup(base).next()?;
     Some(register.description_for(platform))
+}
+
+/// A register's type before the instruction at `offset`, from type
+/// annotations (docs/decisions/0039-types.md). `w0` shows x0's type as read
+/// through its low half.
+fn register_type(analysis: &Analysis, offset: usize, name: &str) -> Option<String> {
+    let register = Register::lookup(name.split('.').next().unwrap_or(name)).next()?;
+    let llvm = register.llvm_name();
+    let number = llvm.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+    let id = match llvm.as_bytes().first()? {
+        b'X' | b'W' => format!("x{number}"),
+        b'B' | b'H' | b'S' | b'D' | b'Q' | b'V' => format!("v{number}"),
+        _ => return None,
+    };
+    let ty = arm_lint::types_at(analysis, offset)?.remove(&id)?;
+    let shown = match (llvm.starts_with('W'), &ty) {
+        (true, arm_lint::Ty::Int { signed, bits }) => arm_lint::Ty::Int {
+            signed: *signed,
+            bits: (*bits).min(32),
+        },
+        _ => ty,
+    };
+    Some(shown.to_string())
 }
 
 /// A signature in a platform's syntax: on Linux, `adrp` takes a bare label,
@@ -1439,6 +1466,16 @@ mod tests {
             .find(|c| c.label == "ldp")
             .and_then(|c| c.documentation);
         assert!(ldp.is_some_and(|d| d.starts_with("Load a pair")));
+    }
+
+    #[test]
+    fn hover_shows_inferred_types() {
+        let text =
+            "; armtool: fn _f(x0: ptr<i64>) -> void\n.globl _f\n_f:\n    ldr x1, [x0]\n    ret\n";
+        let base = hover_text(text, "x0]");
+        assert!(base.contains("Type here: `ptr<i64>`"), "{base}");
+        // Nothing to say without annotations.
+        assert!(!hover_text("_f:\n    ldr x1, [x0]\n", "x0]").contains("Type here"));
     }
 
     #[test]

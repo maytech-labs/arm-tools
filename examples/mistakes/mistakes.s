@@ -74,6 +74,16 @@ _report:
 1:      ldp     x29, x30, [sp], #16
         ret
 
+; armtool: fn _first(x0: ptr<i32>, x1: u64) -> i64
+        .globl  _first
+        .p2align 2
+_first:
+        ldr     x2, [x0]                    ; types: 8 bytes through ptr<i32>
+        cmp     x1, #0
+        b.gt    1f                          ; types: x1 is unsigned, use b.hi
+1:      ldr     w0, [x0]                    ; w0: i32
+        ret                                 ; types: returns i32 where i64 is declared
+
         .type   _main, @function            ; ELF only, quick fix: remove the line
 
         .section __DATA,__data

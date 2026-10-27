@@ -169,6 +169,46 @@ A call doesn't preserve the condition flags (NZCV): `cmp x0, #0`, then `bl _f`, 
 
 Default level: warning.
 
+### `types/call`
+
+An argument or return value that doesn't match the annotated signature
+
+With `; armtool: fn _f(x0: ptr<u8>, x1: i64) -> i32`, each call to _f is checked: x0 must hold a pointer and x1 a 64-bit integer where their types are known, and _f's own returns must leave an i32 in x0. A 32-bit signed value where 64 bits are wanted needs sign-extending first (sxtw). See docs/types.md.
+
+Default level: warning.
+
+### `types/signedness`
+
+A signed test on unsigned values, or the reverse
+
+After comparing unsigned values, b.gt, b.ge, b.lt, and b.le test the wrong flags; use b.hi, b.hs, b.lo, and b.ls. Signed values want the first set. sdiv and udiv must match their operands too. Types come from annotations; see docs/types.md.
+
+Default level: warning.
+
+### `types/memory`
+
+A load or store that doesn't fit the pointer's type
+
+Through a `ptr<i32>`, loads and stores move 4 bytes, offsets are multiples of 4, and pointer arithmetic moves by whole elements. Loading 8 bytes through it reads past the value; an offset of 6 lands mid-element. Using a non-pointer as an address is a finding too. Types come from annotations; see docs/types.md.
+
+Default level: warning.
+
+### `types/pointer-width`
+
+A pointer read through a 32-bit W register
+
+Pointers are 64 bits. Reading one as w0 instead of x0 keeps only the low half. On macOS every user-space address is above 4 GB, so the result is always wrong there; on Linux, heap and stack addresses usually are too. Use the X register.
+
+Default level: warning.
+
+### `types/annotation`
+
+A type annotation comment that can't be read
+
+`armtool:` comments declare types: `fn name(x0: T, ...) -> T` for a function, or `x9: T` for a register here. Types are i8 to i64, u8 to u64, f32, f64, ptr, and ptr<T>. See docs/types.md.
+
+Default level: warning.
+
 ### `abi/syscall-number`
 
 svc without the syscall number in x16 (Darwin) or x8 (Linux)

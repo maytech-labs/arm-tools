@@ -4,6 +4,12 @@
 
         count = 10
 
+// Types for armtool to check (docs/types.md). Change b.le below to b.ls and
+// it warns that the compare is of signed values.
+// armtool: fn _printf(x0: ptr<i8>, ...) -> i32
+// armtool: fn _puts(x0: ptr<i8>) -> i32
+// armtool: fn sort(x0: ptr<i64>, x1: i64) -> void
+
         .text
         .globl  _main
         .p2align 2
@@ -17,7 +23,7 @@ _main:
         bl      sort
 
         adrp    x19, numbers@PAGE
-        add     x19, x19, numbers@PAGEOFF
+        add     x19, x19, numbers@PAGEOFF   ; armtool: x19: ptr<i64>
         mov     x20, #0
 1:      ldr     x1, [x19, x20, lsl #3]
         sub     sp, sp, #16

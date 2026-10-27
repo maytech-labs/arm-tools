@@ -2,6 +2,9 @@
 // Arguments arrive in x0, x1, x2; the double result goes back in d0. For
 // each pair it calls report(i, product) in main.c.
 
+// armtool: fn _dot(x0: ptr<f64>, x1: ptr<f64>, x2: i64) -> f64
+// armtool: fn _report(x0: i64, d0: f64) -> void
+
         .text
         .globl  _dot
         .p2align 2

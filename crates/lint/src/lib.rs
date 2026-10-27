@@ -7,6 +7,7 @@ mod check;
 mod config;
 mod flow;
 mod rules;
+mod types;
 
 use std::collections::HashMap;
 
@@ -16,6 +17,7 @@ use arm_syntax::SyntaxKind;
 pub use calls::{Call, CallGraph, FunctionSpan, call_graph};
 pub use check::{Checked, check};
 pub use config::{Config, Level};
+pub use types::{Annotations, Signature, Ty, Types, annotations, types_at};
 
 /// A lint rule's description, for docs, `armtool rules`, and hover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
