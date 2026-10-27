@@ -2,7 +2,7 @@
 
 Tools for writing AArch64 assembly on macOS: a language server, a linter, and a formatter, built on one parser and one model of the instruction set.
 
-> **Status: pre-release.** The workspace and design are in place; the lexer is being built. See the [roadmap](docs/roadmap.md).
+> **Status: pre-release.** `armls` works: errors as you type, hover, completion, navigation, rename, and highlighting. Operand checking and the linter are next. See the [roadmap](docs/roadmap.md).
 
 It targets the assembly Apple's toolchain accepts: `clang -c -arch arm64`, Mach-O, the Darwin ABI. That means `_`-prefixed symbols, `@PAGE` and `@PAGEOFF`, `;` comments, `%%` separators, and x18 reserved for the OS.
 
@@ -15,11 +15,21 @@ It targets the assembly Apple's toolchain accepts: `clang -c -arch arm64`, Mach-
 
 The linter goes past syntax: ABI rules (callee-saved registers, x18, stack alignment), `adrp` without its `@PAGEOFF`, unbalanced prologues and epilogues, and dead or unreachable code. The [design](docs/design.md#lint) has the full list.
 
+## Install
+
+```sh
+make install                    # armls into /usr/local/bin
+make install PREFIX=~/.local    # somewhere else
+```
+
+Then set up your editor: [editors/](editors/README.md) has Neovim and Helix configs.
+
 ## Build
 
 ```sh
 cargo build --release
-cargo xtask check   # fmt, clippy, tests: what CI runs
+cargo xtask check        # fmt, clippy, tests: what CI runs
+cargo xtask nvim-smoke   # armls inside headless Neovim
 ```
 
 Needs Rust 1.98 (pinned in `rust-toolchain.toml`). The oracle tests need Xcode's clang and run only on macOS.

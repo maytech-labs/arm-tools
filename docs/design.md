@@ -121,7 +121,7 @@ Rules in the `flow` group need a control-flow graph, built per function from lab
 
 ## Language server
 
-**Status:** Not started.
+**Status:** v1 done (2026-10-26): diagnostics, hover, completion, definition, references, highlight, rename, symbols, semantic tokens ([0016](decisions/0016-armls-v1.md)). Folding, inlay hints, code actions, and formatting not started.
 
 `armls` speaks LSP over stdio, built on `lsp-server` and `lsp-types` ([0009](decisions/0009-lsp-library.md)). It reparses a whole file on each change: assembly files are small, and a full reparse of a 10,000 line file should take under 5 ms. Incremental parsing waits until measurements say it's needed.
 

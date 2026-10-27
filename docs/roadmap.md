@@ -54,13 +54,17 @@ Done when go to definition would work for every symbol in the corpus, macros exp
 
 ## M4: language server v1
 
+Shipped early, before operand checking ([0016](decisions/0016-armls-v1.md)).
+
 Done when Neovim and VS Code show diagnostics, hover, definition, references, completion, symbols, and semantic tokens on the corpus, with no panics under a fuzzed edit session.
 
-- [ ] Server loop, document store, position encoding
-- [ ] Diagnostics, hover, definition, references, symbols
-- [ ] Completion, semantic tokens
-- [ ] Rename, folding, inlay hints
-- [ ] `editors/` setup for Neovim and VS Code
+- [x] Server loop, document store, position encoding
+- [x] Diagnostics, hover, definition, references, symbols
+- [x] Completion, semantic tokens
+- [x] Rename, document highlight
+- [ ] Folding, inlay hints, code actions
+- [x] `editors/` setup for Neovim and Helix, `make install`, and `cargo xtask nvim-smoke`
+- [ ] VS Code extension
 
 ## M5: linter
 

@@ -1,0 +1,13 @@
+# armls for Helix. Merge into ~/.config/helix/languages.toml.
+
+[language-server.armls]
+command = "armls"
+
+[[language]]
+name = "arm-asm"
+scope = "source.arm"
+file-types = ["s", "S"]
+comment-tokens = ["//", ";"]
+block-comment-tokens = { start = "/*", end = "*/" }
+language-servers = ["armls"]
+indent = { tab-width = 8, unit = "\t" }

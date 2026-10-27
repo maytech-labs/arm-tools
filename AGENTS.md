@@ -14,7 +14,8 @@ arm-tools is a Cargo workspace of tools for AArch64 assembly on macOS: a languag
 | `crates/lint` | `arm-lint` | The lint engine and its rules |
 | `crates/lsp` | `arm-lsp` | The `armls` binary: the language server |
 | `crates/cli` | `arm-cli` | The `armtool` binary: `lint`, `check`, `fmt` from the command line and CI |
-| `xtask` | (not published) | Repo automation: `cargo xtask <task>` |
+| `xtask` | (not published) | Repo automation: `cargo xtask check`, `survey`, `gen-isa`, `nvim-smoke` |
+| `editors/` | | Editor setup; `editors/neovim/smoke.lua` is the headless Neovim test |
 
 Dependencies point one way: `syntax` and `isa` at the bottom, then `sema`, then `lint`, then `lsp` and `cli`. Nothing lower depends on anything higher.
 
@@ -45,6 +46,7 @@ Two kinds of test, plus an oracle ([0007](docs/decisions/0007-testing.md)).
 - **Unit tests** sit beside the code in `#[cfg(test)] mod tests`. They drive the code test-first and cover edge cases. Rewrite them freely in a refactor.
 - **Integration tests** in `crates/<crate>/tests/` pin the contract: the public API for library crates, and for `armls` and `armtool`, the real binary over stdio or the command line. Change one only when the contract changes.
 - **Oracle tests** run `.s` fixtures through Apple's clang and check we agree on what's valid. They run on macOS and skip elsewhere.
+- **armls tests** drive the real binary over stdio with timeouts (`crates/lsp/tests/lsp.rs`). Editor features live in `crates/lsp/src/ide.rs` as pure functions with unit tests. After changing the server, also run `cargo xtask nvim-smoke`.
 - **Snapshot tests** for parser output live in `crates/syntax/tests/data/parser/`: a `.s` input beside its `.tree`. After a deliberate change, run `UPDATE_SNAPSHOTS=1 cargo test -p arm-syntax --test parse` and read the diff before committing.
 - **Corpus:** every `.s` in `crates/syntax/tests/data/corpus/` must parse without errors and assemble with clang. Lines in `tests/data/invalid.s` must be reported by us and rejected by clang.
 

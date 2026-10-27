@@ -7,11 +7,13 @@
 //! flattened into tokens, so `ldp x0, x1, [sp, #16]!` is
 //! `GPR64, GPR64, [, GPR64sp, SImm7s8, ], !`.
 
+mod docs;
 #[rustfmt::skip]
 mod generated;
 mod mnemonic;
 mod tables;
 
+pub use docs::directive_description;
 use generated::*;
 pub use mnemonic::{CONDITION_CODES, Mnemonic, Special};
 pub use tables::{ClassKind, RegisterKind};

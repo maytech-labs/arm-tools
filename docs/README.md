@@ -23,3 +23,4 @@
 - [0013 Instruction tables from LLVM 21 TableGen, with our own hover text](decisions/0013-isa-from-llvm-tablegen.md)
 - [0014 gen-isa reads clang's assembler matcher, not TableGen's JSON records](decisions/0014-isa-from-asm-matcher.md)
 - [0015 The semantic model is per file, and reports only what clang rejects](decisions/0015-sema-file-model.md)
+- [0016 armls v1: features before operand checking, full sync, and a fixed token legend](decisions/0016-armls-v1.md)
