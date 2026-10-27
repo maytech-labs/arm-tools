@@ -87,7 +87,7 @@ Done when Linux assembly gets the same checks, lint, and editor features as Darw
 - [x] Lint per platform: x18 and frame pointers are Darwin's; `:lo12:` pairs; syscalls in x8
 - [x] Editor: register roles, syscall names, snippets, completion, and C names for Linux
 - [x] Linux examples built and run on an Arm Linux CI runner
-- [ ] Linux-specific lint rules, such as checks for `.note.GNU-stack` and `.type`/`.size` on exported functions
+- [x] Linux-specific lint rules: `elf/gnu-stack` and `elf/function-symbol`, with quick fixes
 
 ## M5: linter
 

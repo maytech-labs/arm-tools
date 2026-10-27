@@ -163,6 +163,35 @@ On Darwin, svc #0x80 takes the system call number in x16, not x8 as on Linux. Se
 
 Default level: warning.
 
+### `elf/gnu-stack`
+
+A Linux file with code but no .note.GNU-stack section
+
+Without `.section .note.GNU-stack,"",%progbits`, the GNU linker assumes the code needs an executable stack and makes the whole program's stack executable, which turns stack overflows into code execution. Recent linkers warn about it. Add the line at the end of every assembly file. Linux only.
+
+Quick fix: adds the section at the end of the file.
+
+Default level: warning.
+
+### `elf/function-symbol`
+
+An exported Linux function without .type or .size
+
+On ELF, `.type name, %function` marks a symbol as code and `.size name, .-name` gives its length. Without them, debuggers, profilers, and crash reports can't place the function, and the dynamic linker treats it as data. Add `.type` before the label and `.size` after the last instruction. Linux only.
+
+```asm
+        .globl  main
+        .type   main, %function
+main:
+        mov     w0, #0
+        ret
+        .size   main, .-main
+```
+
+Quick fix: adds whichever is missing.
+
+Default level: warning.
+
 ### `style/unused-label`
 
 A label nothing refers to

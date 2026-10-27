@@ -794,7 +794,9 @@ fn linux_project() {
         .filter_map(|d| d["code"].as_str())
         .filter(|c| *c != "style/unused-label")
         .collect();
-    assert!(codes.is_empty(), "{diagnostics}");
+    // Only the ELF bookkeeping this snippet skips.
+    assert!(codes.contains(&"elf/gnu-stack"), "{diagnostics}");
+    assert!(codes.iter().all(|c| c.starts_with("elf/")), "{diagnostics}");
 
     let at = |line: u32, character: u32| json!({ "textDocument": { "uri": uri }, "position": start(line, character) });
     let hover = client.request("textDocument/hover", at(2, 9))["result"].clone();

@@ -89,6 +89,18 @@ pub(crate) const RULES: &[RuleInfo] = &[
         explanation: "On Darwin, svc #0x80 takes the system call number in x16, not x8 as on Linux. Set x16 before the svc, for example mov x16, #4 for write. On Linux, svc #0 takes it in x8: mov x8, #64 for write.",
     },
     RuleInfo {
+        id: "elf/gnu-stack",
+        default_level: Level::Warning,
+        summary: "A Linux file with code but no .note.GNU-stack section",
+        explanation: "Without `.section .note.GNU-stack,\"\",%progbits`, the GNU linker assumes the code needs an executable stack and makes the whole program's stack executable, which turns stack overflows into code execution. Recent linkers warn about it. Add the line at the end of every assembly file. Linux only.",
+    },
+    RuleInfo {
+        id: "elf/function-symbol",
+        default_level: Level::Warning,
+        summary: "An exported Linux function without .type or .size",
+        explanation: "On ELF, `.type name, %function` marks a symbol as code and `.size name, .-name` gives its length. Without them, debuggers, profilers, and crash reports can't place the function, and the dynamic linker treats it as data. Add `.type` before the label and `.size` after the last instruction. Linux only.",
+    },
+    RuleInfo {
         id: "style/unused-label",
         default_level: Level::Hint,
         summary: "A label nothing refers to",
@@ -102,6 +114,8 @@ pub(crate) fn run(analysis: &Analysis) -> Vec<Finding> {
     let darwin = analysis.platform() == Platform::Darwin;
     if darwin {
         x18(analysis, &mut out);
+    } else {
+        elf_symbols(analysis, &cfg, &mut out);
     }
     stack_alignment(analysis, &mut out);
     unreachable(analysis, &mut out);
@@ -127,6 +141,100 @@ pub(crate) fn run(analysis: &Analysis) -> Vec<Finding> {
         unbalanced_stack(analysis, &cfg, function, entry, &mut out);
     }
     out
+}
+
+/// The ELF bookkeeping a Linux file needs: a `.note.GNU-stack` section, and
+/// `.type` and `.size` for each exported function.
+fn elf_symbols(analysis: &Analysis, cfg: &Cfg, out: &mut Vec<Finding>) {
+    use arm_syntax::ast::Statement;
+    let text = analysis.text();
+    let mut typed = HashSet::new();
+    let mut sized = HashSet::new();
+    let mut gnu_stack = false;
+    for statement in analysis.parse().tree().statements() {
+        let Statement::Directive(directive) = statement else {
+            continue;
+        };
+        let Some(name) = directive.name() else {
+            continue;
+        };
+        let line = directive.syntax().text().to_string();
+        let args = line
+            .split_once(char::is_whitespace)
+            .map_or("", |(_, a)| a)
+            .trim();
+        let first = args.split(',').next().unwrap_or("").trim().to_string();
+        match name.text().to_ascii_lowercase().as_str() {
+            ".type" if args.contains("function") => {
+                typed.insert(first);
+            }
+            ".size" => {
+                sized.insert(first);
+            }
+            ".section" | ".pushsection" if first == ".note.GNU-stack" => gnu_stack = true,
+            _ => {}
+        }
+    }
+    let has_code = analysis
+        .items()
+        .iter()
+        .any(|i| matches!(i, Item::Instruction(_)));
+    if has_code && !gnu_stack {
+        let first_line = text.find('\n').unwrap_or(text.len());
+        let line = "        .section .note.GNU-stack,\"\",%progbits";
+        let ending = if text.ends_with('\n') || text.is_empty() {
+            ""
+        } else {
+            "\n"
+        };
+        out.push(fixed(
+            finding(
+                "elf/gnu-stack",
+                0..first_line,
+                "no .note.GNU-stack section: the linker will make the stack executable. Add `.section .note.GNU-stack,\"\",%progbits` at the end of the file".into(),
+            ),
+            "Add the .note.GNU-stack section".into(),
+            vec![(text.len()..text.len(), format!("{ending}\n{line}\n"))],
+        ));
+    }
+    let line_start = |offset: usize| text[..offset].rfind('\n').map_or(0, |i| i + 1);
+    for function in &cfg.functions {
+        let exported = analysis
+            .symbols()
+            .iter()
+            .any(|s| s.name == function.name && s.range == function.name_range && s.exported);
+        if !exported {
+            continue;
+        }
+        let name = &function.name;
+        let start = line_start(function.name_range.start);
+        if !typed.contains(name) {
+            out.push(fixed(
+                finding(
+                    "elf/function-symbol",
+                    function.name_range.clone(),
+                    format!("'{name}' has no `.type {name}, %function`, so tools see data, not a function. Add it before the label"),
+                ),
+                format!("Add `.type {name}, %function`"),
+                vec![(start..start, format!("        .type   {name}, %function\n"))],
+            ));
+        }
+        let last = function.span.clone().last().map(|i| cfg.insns[i]);
+        if let (false, Some(last)) = (sized.contains(name), last) {
+            let end = text[last.range.end..]
+                .find('\n')
+                .map_or(text.len(), |i| last.range.end + i);
+            out.push(fixed(
+                finding(
+                    "elf/function-symbol",
+                    function.name_range.clone(),
+                    format!("'{name}' has no `.size {name}, .-{name}`, so tools don't know where it ends. Add it after its last instruction"),
+                ),
+                format!("Add `.size {name}, .-{name}`"),
+                vec![(end..end, format!("\n        .size   {name}, .-{name}"))],
+            ));
+        }
+    }
 }
 
 fn finding(rule: &'static str, range: std::ops::Range<usize>, message: String) -> Finding {
@@ -1045,7 +1153,8 @@ _main:
             &Config::default(),
         )
         .into_iter()
-        .filter(|d| d.code != "style/unused-label")
+        // ELF bookkeeping has its own test.
+        .filter(|d| d.code != "style/unused-label" && !d.code.starts_with("elf/"))
         .map(|d| {
             (
                 d.code,
@@ -1180,6 +1289,49 @@ _main:
         // At entry, arguments are defined.
         let entry = ".globl _f\n_f:\n  add x0, x6, x7\n  ret\n";
         assert_eq!(findings(entry), []);
+    }
+
+    #[test]
+    fn elf_bookkeeping() {
+        let lint_linux = |text: &str| {
+            lint(
+                &Analysis::for_platform(text, arm_sema::Platform::Linux),
+                &Config::default(),
+            )
+        };
+        let bare = ".globl main\nmain:\n    mov w0, #0\n    ret\n";
+        let found = lint_linux(bare);
+        let codes: Vec<&str> = found.iter().map(|d| d.code).collect();
+        assert_eq!(
+            codes,
+            [
+                "elf/gnu-stack",
+                "elf/function-symbol",
+                "elf/function-symbol"
+            ],
+            "{found:?}"
+        );
+        // Each fix, applied, makes its finding go away.
+        let mut fixed = bare.to_string();
+        let mut edits: Vec<(std::ops::Range<usize>, String)> = found
+            .iter()
+            .flat_map(|d| d.fix.clone().expect("a fix").edits)
+            .collect();
+        edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+        for (range, text) in edits {
+            fixed.replace_range(range, &text);
+        }
+        assert_eq!(lint_linux(&fixed), [], "{fixed}");
+        assert!(fixed.contains(".type   main, %function\nmain:"), "{fixed}");
+        assert!(
+            fixed.contains("ret\n        .size   main, .-main"),
+            "{fixed}"
+        );
+        // Not for local functions, data-only files, or Darwin.
+        let local = "bl helper\nhelper:\n    ret\n.section .note.GNU-stack,\"\",%progbits\n";
+        assert_eq!(lint_linux(local), []);
+        assert_eq!(lint_linux(".data\n.globl x\nx: .word 1\n"), []);
+        assert!(rules(bare).iter().all(|r| !r.starts_with("elf/")));
     }
 
     #[test]
