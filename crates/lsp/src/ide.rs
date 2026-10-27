@@ -58,10 +58,13 @@ fn instruction_hover(analysis: &Analysis, text: &str) -> Option<String> {
         return Some(symbol_hover(analysis, symbol));
     }
     let mnemonic = Mnemonic::parse(text);
+    let about = arm_isa::instruction_description(&mnemonic.head)
+        .map(|d| format!("{d}\n\n"))
+        .unwrap_or_default();
     match mnemonic.special() {
         Some(Special::SysAlias) => {
             return Some(format!(
-                "**{}**\n\nA system operation, written as an alias for `sys`: `{} <op>{{, Xt}}`.",
+                "**{}**\n\n{about}A system operation, written as an alias for `sys`: `{} <op>{{, Xt}}`.",
                 mnemonic.head, mnemonic.head
             ));
         }
@@ -73,7 +76,7 @@ fn instruction_hover(analysis: &Analysis, text: &str) -> Option<String> {
         }
         Some(Special::Bitfield) => {
             return Some(format!(
-                "**{}**\n\nA bitfield instruction, an alias of `bfm`, `sbfm`, or `ubfm`: `{} Rd, Rn, #lsb, #width`.",
+                "**{}**\n\n{about}A bitfield instruction, an alias of `bfm`, `sbfm`, or `ubfm`: `{} Rd, Rn, #lsb, #width`.",
                 mnemonic.head, mnemonic.head
             ));
         }
@@ -98,7 +101,11 @@ fn instruction_hover(analysis: &Analysis, text: &str) -> Option<String> {
     }
     let total = lines.len();
     lines.truncate(HOVER_FORMS);
-    let mut out = format!("**{}**\n\n```asm\n{}\n```", mnemonic.head, lines.join("\n"));
+    let mut out = format!(
+        "**{}**\n\n{about}```asm\n{}\n```",
+        mnemonic.head,
+        lines.join("\n")
+    );
     if total > HOVER_FORMS {
         out.push_str(&format!("\n\nand {} more forms.", total - HOVER_FORMS));
     }
@@ -166,6 +173,8 @@ pub struct Completion {
     pub detail: Option<String>,
     /// What to insert instead of the label, for snippets.
     pub insert: Option<String>,
+    /// Longer text, like what an instruction does.
+    pub documentation: Option<String>,
 }
 
 /// A template for code that's written the same way every time.
@@ -269,11 +278,14 @@ pub fn completions(analysis: &Analysis, offset: usize, globals: &[String]) -> Ve
         if !before.starts_with('.') || before.is_empty() {
             for mnemonic in arm_isa::mnemonics() {
                 let detail = arm_isa::forms(mnemonic).next().map(Form::signature);
-                out.push(completion(
-                    mnemonic.to_string(),
-                    CompletionKind::Instruction,
-                    detail.as_deref(),
-                ));
+                out.push(Completion {
+                    documentation: arm_isa::instruction_description(mnemonic).map(str::to_string),
+                    ..completion(
+                        mnemonic.to_string(),
+                        CompletionKind::Instruction,
+                        detail.as_deref(),
+                    )
+                });
             }
             for snippet in SNIPPETS {
                 out.push(Completion {
@@ -281,6 +293,7 @@ pub fn completions(analysis: &Analysis, offset: usize, globals: &[String]) -> Ve
                     kind: CompletionKind::Snippet,
                     detail: Some(snippet.detail.to_string()),
                     insert: Some(snippet.body.to_string()),
+                    documentation: None,
                 });
             }
             for symbol in analysis
@@ -379,6 +392,7 @@ fn operand_completions(
                 kind,
                 detail,
                 insert: None,
+                documentation: None,
             });
         }
     };
@@ -629,6 +643,7 @@ fn completion(label: String, kind: CompletionKind, detail: Option<&str>) -> Comp
         kind,
         detail: detail.map(str::to_string),
         insert: None,
+        documentation: None,
     }
 }
 
@@ -1194,6 +1209,30 @@ mod tests {
             text.contains("add Xn|SP, Xn|SP, #imm12{, lsl #12}"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn hover_says_what_an_instruction_does() {
+        let text = hover_text("ldp x29, x30, [sp], #16", "ldp");
+        assert!(
+            text.starts_with("**ldp**\n\nLoad a pair of registers"),
+            "{text}"
+        );
+        // Before the forms.
+        assert!(text.find("Load a pair") < text.find("```asm"), "{text}");
+        let text = hover_text("b.ne _f", "b.ne");
+        assert!(text.contains("`b.cond` branches"), "{text}");
+        // Aliases clang handles in C++ get it too.
+        let text = hover_text("ubfx x0, x1, #4, #8", "ubfx");
+        assert!(text.contains("Unsigned bitfield extract"), "{text}");
+        let text = hover_text("dc civac, x0", "dc");
+        assert!(text.contains("Data cache operation"), "{text}");
+        // Mnemonic completions carry it as documentation.
+        let ldp = completions(&Analysis::new("  "), 2, &[])
+            .into_iter()
+            .find(|c| c.label == "ldp")
+            .and_then(|c| c.documentation);
+        assert!(ldp.is_some_and(|d| d.starts_with("Load a pair")));
     }
 
     #[test]

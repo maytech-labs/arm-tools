@@ -1308,6 +1308,12 @@ fn completion_item(completion: ide::Completion) -> CompletionItem {
             .is_some()
             .then_some(lsp_types::InsertTextFormat::SNIPPET),
         insert_text: completion.insert,
+        documentation: completion.documentation.map(|value| {
+            lsp_types::Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value,
+            })
+        }),
         ..CompletionItem::default()
     }
 }

@@ -38,7 +38,7 @@ Done when every instruction clang accepts in the corpus matches exactly one form
 - [x] Matcher: forms in clang's order and clang's near-miss messages; 0 disagreements with clang on 2,352 files
 - [x] CPU feature checks (`instruction requires: sve2`), following `.arch`, `.cpu`, `.arch_extension`, and `[target]` ([0022](decisions/0022-cpu-features.md))
 - [ ] Hand-written table of C++-parser aliases (`ubfx`, `bfi`, `bne`...) and SYS aliases, each tested against clang
-- [ ] Hover text: our descriptions in `crates/isa/data/descriptions.toml`, common instructions first
+- [x] Hover text: our descriptions of about 270 common instructions ([0036](decisions/0036-instruction-descriptions.md))
 
 ## M3: sema
 

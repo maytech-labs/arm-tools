@@ -7,6 +7,7 @@
 //! flattened into tokens, so `ldp x0, x1, [sp, #16]!` is
 //! `GPR64, GPR64, [, GPR64sp, SImm7s8, ], !`.
 
+mod descriptions;
 mod docs;
 mod features;
 #[rustfmt::skip]
@@ -17,6 +18,7 @@ mod operand;
 mod predicates;
 mod tables;
 
+pub use descriptions::instruction_description;
 pub use docs::{Signature, directive_description, syscall_name};
 pub use features::FeatureSet;
 use generated::*;
