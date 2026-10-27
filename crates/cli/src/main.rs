@@ -14,6 +14,8 @@ Usage:
   armtool check [--json] <path>...    Syntax, symbol, and operand errors, as clang reports them
   armtool lint [--json] [--config <file>] <path>...
                                       check, plus the lint rules
+  armtool fmt [--check] <path>...     Format files in place; --check lists files that
+                                      need formatting and changes nothing
   armtool rules                       List the lint rules
   armtool explain <rule>              Explain a rule and how to fix what it finds
   armtool --version
@@ -34,6 +36,7 @@ fn main() -> ExitCode {
     let rest = &args[1..];
     match command.as_str() {
         "check" => run(rest, false),
+        "fmt" => fmt(rest),
         "lint" => run(rest, true),
         "rules" => {
             for rule in arm_lint::rules() {
@@ -219,6 +222,69 @@ fn run(args: &[String], lint: bool) -> ExitCode {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// Formats files with the nearest armtool.toml's [format] settings.
+fn fmt(args: &[String]) -> ExitCode {
+    let check = args.iter().any(|a| a == "--check");
+    let mut files = Vec::new();
+    for arg in args.iter().filter(|a| *a != "--check") {
+        if arg.starts_with('-') {
+            return usage(&format!("unknown flag '{arg}'"));
+        }
+        if let Err(error) = collect(Path::new(arg), &mut files) {
+            eprintln!("armtool: {error}");
+            return ExitCode::from(2);
+        }
+    }
+    if files.is_empty() {
+        return usage("give at least one file or directory");
+    }
+    files.sort();
+    let mut unformatted = 0;
+    for file in &files {
+        let text = match std::fs::read_to_string(file) {
+            Ok(text) => text,
+            Err(error) => {
+                eprintln!("armtool: can't read {}: {error}", file.display());
+                return ExitCode::from(2);
+            }
+        };
+        let dir = file.parent().unwrap_or(Path::new("."));
+        let config = match Config::discover(dir) {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("armtool: {error}");
+                return ExitCode::from(2);
+            }
+        };
+        let formatted = arm_syntax::format(&text, &config.format);
+        if formatted == text {
+            continue;
+        }
+        unformatted += 1;
+        if check {
+            println!("{}", file.display());
+        } else if let Err(error) = std::fs::write(file, formatted) {
+            eprintln!("armtool: can't write {}: {error}", file.display());
+            return ExitCode::from(2);
+        }
+    }
+    match (check, unformatted) {
+        (true, 0) | (false, _) => {
+            if !check {
+                eprintln!("armtool: formatted {unformatted} of {} files", files.len());
+            }
+            ExitCode::SUCCESS
+        }
+        (true, n) => {
+            eprintln!(
+                "armtool: {n} file{} need formatting: run armtool fmt",
+                if n == 1 { "" } else { "s" }
+            );
+            ExitCode::from(1)
+        }
     }
 }
 

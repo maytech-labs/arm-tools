@@ -198,6 +198,35 @@ fn includes_follow_the_configured_paths() {
 }
 
 #[test]
+fn fmt_rewrites_and_check_only_reports() {
+    let dir = Dir::new("fmt");
+    let messy = "_f:  stp x29,x30,[sp,#-16]!\n  ret\n";
+    let tidy = "_f: stp     x29, x30, [sp, #-16]!\n    ret\n";
+    let file = dir.file("a.s", messy);
+    let check = armtool(&["fmt", "--check", "."], &dir.0);
+    assert_eq!(check.status.code(), Some(1));
+    assert!(stdout(&check).contains("a.s"));
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read"),
+        messy,
+        "--check wrote"
+    );
+    assert!(armtool(&["fmt", "a.s"], &dir.0).status.success());
+    assert_eq!(std::fs::read_to_string(&file).expect("read"), tidy);
+    assert_eq!(
+        armtool(&["fmt", "--check", "a.s"], &dir.0).status.code(),
+        Some(0)
+    );
+    // [format] settings apply.
+    dir.file("armtool.toml", "[format]\nindent = 8\nmnemonic_width = 4\n");
+    assert!(armtool(&["fmt", "a.s"], &dir.0).status.success());
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read"),
+        "_f:     stp x29, x30, [sp, #-16]!\n        ret\n"
+    );
+}
+
+#[test]
 fn rules_and_explain() {
     let dir = Dir::new("rules");
     let output = armtool(&["rules"], &dir.0);

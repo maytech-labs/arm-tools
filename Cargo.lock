@@ -9,6 +9,7 @@ dependencies = [
  "arm-isa",
  "arm-lint",
  "arm-sema",
+ "arm-syntax",
  "serde_json",
 ]
 

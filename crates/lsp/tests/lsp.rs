@@ -237,6 +237,7 @@ fn advertises_capabilities_and_negotiates_encoding() {
         "documentSymbolProvider",
         "renameProvider",
         "semanticTokensProvider",
+        "documentFormattingProvider",
     ] {
         assert!(!caps[capability].is_null(), "missing {capability}");
     }
@@ -419,6 +420,33 @@ fn includes_resolve_across_files_and_unsaved_edits() {
     );
     assert!(client.shutdown().success());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn formatting() {
+    let mut client = Client::start(true);
+    client.open(".globl _f\n_f:  mov x0,#1\n  ret\n");
+    let edits = client.request(
+        "textDocument/formatting",
+        json!({ "textDocument": { "uri": URI }, "options": { "tabSize": 4, "insertSpaces": true } }),
+    )["result"]
+        .clone();
+    let edits = edits.as_array().cloned().unwrap_or_default();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(
+        edits[0]["newText"],
+        "    .globl  _f\n_f: mov     x0, #1\n    ret\n"
+    );
+    assert_eq!(edits[0]["range"]["start"], start(0, 0));
+    // Already formatted: no edits.
+    client.change(2, "    ret\n");
+    let none = client.request(
+        "textDocument/formatting",
+        json!({ "textDocument": { "uri": URI }, "options": { "tabSize": 4, "insertSpaces": true } }),
+    )["result"]
+        .clone();
+    assert_eq!(none, json!([]));
+    assert!(client.shutdown().success());
 }
 
 #[test]

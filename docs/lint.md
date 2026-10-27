@@ -19,6 +19,16 @@ The same file tells `armtool` and `armls` where to find `.include` files, search
 paths = ["include", "../shared"]   # relative to armtool.toml
 ```
 
+And how `armtool fmt` and the editor lay code out ([0020](decisions/0020-formatter.md)):
+
+```toml
+[format]
+indent = 4           # column for mnemonics and directives
+mnemonic_width = 8   # operands start after this
+comment_column = 40  # for trailing comments
+max_blank_lines = 1
+```
+
 Silence one finding with a comment on its line, or on the line above:
 
 ```asm

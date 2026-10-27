@@ -7,6 +7,12 @@
 //!
 //! [include]
 //! paths = ["include", "../shared"]   # relative to this file
+//!
+//! [format]
+//! indent = 4
+//! mnemonic_width = 8
+//! comment_column = 40
+//! max_blank_lines = 1
 //! ```
 
 use std::collections::HashMap;
@@ -32,6 +38,7 @@ pub struct Config {
     levels: HashMap<String, Level>,
     /// Directories to search for `.include` files, as written.
     include: Vec<PathBuf>,
+    pub format: arm_syntax::FormatOptions,
     /// Where it was read from, if anywhere.
     pub path: Option<PathBuf>,
 }
@@ -43,6 +50,17 @@ struct File {
     rules: HashMap<String, Level>,
     #[serde(default)]
     include: IncludeSection,
+    #[serde(default)]
+    format: FormatSection,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct FormatSection {
+    indent: Option<usize>,
+    mnemonic_width: Option<usize>,
+    comment_column: Option<usize>,
+    max_blank_lines: Option<usize>,
 }
 
 #[derive(Deserialize, Default)]
@@ -71,9 +89,17 @@ impl Config {
                 return Err(message);
             }
         }
+        let defaults = arm_syntax::FormatOptions::default();
+        let f = file.format;
         Ok(Config {
             levels: file.rules,
             include: file.include.paths,
+            format: arm_syntax::FormatOptions {
+                indent: f.indent.unwrap_or(defaults.indent),
+                mnemonic_width: f.mnemonic_width.unwrap_or(defaults.mnemonic_width),
+                comment_column: f.comment_column.unwrap_or(defaults.comment_column),
+                max_blank_lines: f.max_blank_lines.unwrap_or(defaults.max_blank_lines),
+            },
             path: None,
         })
     }
@@ -162,6 +188,14 @@ mod tests {
         assert!(level.contains("Levels are"), "{level}");
         let section = Config::parse("[rulez]\n").unwrap_err();
         assert!(!section.is_empty());
+    }
+
+    #[test]
+    fn format_options() {
+        let config = Config::parse("[format]\nindent = 8\n").expect("valid");
+        assert_eq!(config.format.indent, 8);
+        assert_eq!(config.format.mnemonic_width, 8);
+        assert!(Config::parse("[format]\nindnet = 8\n").is_err());
     }
 
     #[test]

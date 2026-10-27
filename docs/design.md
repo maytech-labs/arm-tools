@@ -131,7 +131,7 @@ Features, in order: diagnostics, document symbols, hover, go to definition and r
 
 ## Command line
 
-**Status:** `check`, `lint`, `rules`, and `explain` done (2026-10-26); `fmt` not started.
+**Status:** `check`, `lint`, `fmt`, `rules`, and `explain` done (2026-10-26).
 
 `armtool lint [paths]`, `armtool check [paths]`, `armtool fmt [--check] [paths]`. Each supports `--json`. Exit codes: 0 clean, 1 findings, 2 usage error.
 

@@ -12,8 +12,9 @@ use lsp_types::notification::{
     PublishDiagnostics,
 };
 use lsp_types::request::{
-    Completion, DocumentHighlightRequest, DocumentSymbolRequest, GotoDefinition, HoverRequest,
-    PrepareRenameRequest, References, Rename, Request as _, SemanticTokensFullRequest,
+    Completion, DocumentHighlightRequest, DocumentSymbolRequest, Formatting, GotoDefinition,
+    HoverRequest, PrepareRenameRequest, References, Rename, Request as _,
+    SemanticTokensFullRequest,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
@@ -105,6 +106,7 @@ fn capabilities(encoding: Encoding) -> ServerCapabilities {
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        document_formatting_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -427,6 +429,30 @@ impl Server<'_> {
                         ..WorkspaceEdit::default()
                     }),
                 ))
+            }
+            Formatting::METHOD => {
+                let params: lsp_types::DocumentFormattingParams = params(request)?;
+                let uri = &params.text_document.uri;
+                let Some(doc) = self.documents.get(uri) else {
+                    return Ok(ok(id, None::<Vec<TextEdit>>));
+                };
+                // The nearest armtool.toml's [format] settings, as armtool fmt uses.
+                let config = file_path(uri)
+                    .as_deref()
+                    .and_then(Path::parent)
+                    .map_or(Ok(arm_lint::Config::default()), arm_lint::Config::discover)
+                    .map_err(Failure::Refused)?;
+                let text = doc.analysis.text();
+                let formatted = arm_syntax::format(text, &config.format);
+                let edits = if formatted == text {
+                    Vec::new()
+                } else {
+                    vec![TextEdit {
+                        range: self.range(&doc.analysis, 0..text.len()),
+                        new_text: formatted,
+                    }]
+                };
+                Ok(ok(id, Some(edits)))
             }
             method => Err(Failure::MethodNotFound(method.to_string())),
         }

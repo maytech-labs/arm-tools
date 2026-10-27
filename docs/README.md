@@ -28,3 +28,4 @@
 - [0017 Operand checking: clang's operand model, ported predicates, and permissive gaps](decisions/0017-operand-matching.md)
 - [0018 The linter: rules over the semantic model, a control-flow graph, and quiet when unsure](decisions/0018-lint.md)
 - [0019 Following `.include`: import definitions, search like clang but forgive the working directory](decisions/0019-includes.md)
+- [0020 The formatter changes only whitespace, and proves it](decisions/0020-formatter.md)

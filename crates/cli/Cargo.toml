@@ -16,6 +16,7 @@ path = "src/main.rs"
 arm-isa.workspace = true
 arm-lint.workspace = true
 arm-sema.workspace = true
+arm-syntax.workspace = true
 
 [lints]
 workspace = true

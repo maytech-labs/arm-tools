@@ -15,6 +15,7 @@ What you get, with the default keymaps of Neovim 0.11:
 | Rename | `grn` |
 | Outline | `gO` |
 | Completion | `Ctrl-x Ctrl-o`, or your completion plugin |
+| Format | `gq` on a selection, or `:lua vim.lsp.buf.format()` |
 | Semantic highlighting | Automatic |
 
 `editors/neovim/smoke.lua` is the headless test `cargo xtask nvim-smoke` runs; it's not for your config.

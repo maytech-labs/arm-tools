@@ -80,7 +80,7 @@ Done when the first rules in the design run in `armls` and `armtool lint`, each 
 
 ## M6: formatter
 
-- [ ] `armtool fmt` and LSP formatting: column alignment for mnemonics, operands, and comments
+- [x] `armtool fmt` and LSP formatting: column alignment for mnemonics, operands, and comments, whitespace only, proved by identical objects ([0020](decisions/0020-formatter.md))
 
 ## M7: deeper analysis
 
