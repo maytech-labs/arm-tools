@@ -126,6 +126,12 @@ pub struct Analysis {
     /// Register aliases in scope at the end of the file.
     aliases: HashMap<String, String>,
     includes: Vec<(Range<usize>, PathBuf)>,
+    /// This file's symbols (not included ones), by where they start, and
+    /// the longest one: for lookups by offset.
+    local_symbols: Vec<usize>,
+    longest_symbol: usize,
+    /// The longest reference; references are sorted by start.
+    longest_reference: usize,
 }
 
 impl Analysis {
@@ -230,7 +236,54 @@ impl Analysis {
             constants: builder.constants,
             aliases: builder.aliases,
             includes: builder.includes,
+            local_symbols: Vec::new(),
+            longest_symbol: 0,
+            longest_reference: 0,
         }
+        .indexed()
+    }
+
+    /// Builds the offset lookups.
+    fn indexed(mut self) -> Analysis {
+        let mut local: Vec<usize> = (0..self.symbols.len())
+            .filter(|&i| self.symbols[i].origin.is_none())
+            .collect();
+        local.sort_by_key(|&i| (self.symbols[i].range.start, i));
+        self.longest_symbol = local
+            .iter()
+            .map(|&i| self.symbols[i].range.len())
+            .max()
+            .unwrap_or(0);
+        self.local_symbols = local;
+        self.longest_reference = self
+            .references
+            .iter()
+            .map(|r| r.range.len())
+            .max()
+            .unwrap_or(0);
+        self
+    }
+
+    /// This file's symbols whose ranges touch `offset`, lowest index first.
+    fn local_symbols_touching(&self, offset: usize) -> impl Iterator<Item = usize> + '_ {
+        let end = self
+            .local_symbols
+            .partition_point(|&i| self.symbols[i].range.start <= offset);
+        let begin = self.local_symbols[..end]
+            .partition_point(|&i| self.symbols[i].range.start + self.longest_symbol < offset);
+        let mut found: Vec<usize> = self.local_symbols[begin..end]
+            .iter()
+            .copied()
+            .filter(|&i| offset <= self.symbols[i].range.end)
+            .collect();
+        found.sort_unstable();
+        found.into_iter()
+    }
+
+    /// The symbol this file defines starting exactly at `start`.
+    pub fn definition_at(&self, start: usize) -> Option<usize> {
+        self.local_symbols_touching(start)
+            .find(|&i| self.symbols[i].range.start == start)
     }
 
     /// The operands of an instruction being typed, for the matcher:
@@ -345,23 +398,20 @@ impl Analysis {
     /// The symbol defined or referenced at a byte offset. A cursor right after
     /// a name counts, so the end of `_main` finds it.
     pub fn symbol_at(&self, offset: usize) -> Option<usize> {
-        let touches = |r: &Range<usize>| r.start <= offset && offset <= r.end;
-        self.symbols
-            .iter()
-            .position(|s| s.origin.is_none() && touches(&s.range))
-            .or_else(|| {
-                self.references
-                    .iter()
-                    .find(|r| touches(&r.range))
-                    .and_then(|r| r.symbol)
-            })
+        self.local_symbols_touching(offset)
+            .next()
+            .or_else(|| self.reference_at(offset).and_then(|r| r.symbol))
     }
 
     /// The reference at a byte offset, resolved or not.
     pub fn reference_at(&self, offset: usize) -> Option<&Reference> {
-        self.references
+        // References are sorted by start: the first that touches `offset`.
+        let end = self.references.partition_point(|r| r.range.start <= offset);
+        let begin = self.references[..end]
+            .partition_point(|r| r.range.start + self.longest_reference < offset);
+        self.references[begin..end]
             .iter()
-            .find(|r| r.range.start <= offset && offset <= r.range.end)
+            .find(|r| offset <= r.range.end)
     }
 
     /// Every reference to a symbol, in source order.
@@ -1471,17 +1521,28 @@ impl Builder<'_> {
 
     /// Resolves every reference now that all definitions are known.
     fn resolve(&mut self) -> Vec<Reference> {
-        for name in std::mem::take(&mut self.exported) {
-            for symbol in self.symbols.iter_mut().filter(|s| s.name == name) {
+        let exported: std::collections::HashSet<String> =
+            std::mem::take(&mut self.exported).into_iter().collect();
+        for symbol in self.symbols.iter_mut() {
+            if exported.contains(&symbol.name) {
                 symbol.exported = true;
             }
         }
+        // Symbol indices by name, in order.
+        let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, symbol) in self.symbols.iter().enumerate() {
+            by_name.entry(symbol.name.clone()).or_default().push(i);
+        }
+        let named = |name: &str| by_name.get(name).map_or(&[][..], Vec::as_slice);
         let mut references = Vec::new();
         for pending in std::mem::take(&mut self.pending) {
             let symbol = if pending.macro_only {
-                self.find(&pending.name, SymbolKind::Macro)
+                named(&pending.name)
+                    .iter()
+                    .copied()
+                    .find(|&i| self.symbols[i].kind == SymbolKind::Macro)
             } else {
-                self.resolve_name(&pending.name, pending.range.start)
+                self.resolve_name(&pending.name, pending.range.start, &named)
             };
             references.push(Reference {
                 name: pending.name,
@@ -1490,21 +1551,15 @@ impl Builder<'_> {
             });
         }
         for (number, range, forward) in std::mem::take(&mut self.local_refs) {
-            let candidates = self
-                .symbols
+            let symbols = &self.symbols;
+            let mut candidates = named(&number)
                 .iter()
-                .enumerate()
-                .filter(|(_, s)| s.kind == SymbolKind::LocalLabel && s.name == number);
+                .copied()
+                .filter(|&i| symbols[i].kind == SymbolKind::LocalLabel);
             let symbol = if forward {
-                candidates
-                    .filter(|(_, s)| s.range.start > range.start)
-                    .map(|(i, _)| i)
-                    .next()
+                candidates.find(|&i| symbols[i].range.start > range.start)
             } else {
-                candidates
-                    .filter(|(_, s)| s.range.start < range.start)
-                    .map(|(i, _)| i)
-                    .next_back()
+                candidates.rfind(|&i| symbols[i].range.start < range.start)
             };
             if symbol.is_none() {
                 let direction = if forward { "after" } else { "before" };
@@ -1526,20 +1581,26 @@ impl Builder<'_> {
         references
     }
 
-    fn resolve_name(&self, name: &str, at: usize) -> Option<usize> {
+    /// `named` gives the indices of the symbols with a name, in order.
+    fn resolve_name<'n>(
+        &self,
+        name: &str,
+        at: usize,
+        named: &impl Fn(&str) -> &'n [usize],
+    ) -> Option<usize> {
         let lower = name.to_ascii_lowercase();
-        let alias = self.symbols.iter().rposition(|s| {
+        let alias = named(&lower).iter().copied().rev().find(|&i| {
+            let s = &self.symbols[i];
             s.kind == SymbolKind::RegisterAlias
-                && s.name == lower
                 && s.range.start < at
                 && s.scope_end.is_none_or(|end| at < end)
         });
         alias.or_else(|| {
-            self.symbols.iter().position(|s| {
+            named(name).iter().copied().find(|&i| {
                 matches!(
-                    s.kind,
+                    self.symbols[i].kind,
                     SymbolKind::Label | SymbolKind::Constant | SymbolKind::Macro
-                ) && s.name == name
+                )
             })
         })
     }

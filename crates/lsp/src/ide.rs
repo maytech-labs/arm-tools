@@ -1081,11 +1081,7 @@ pub fn semantic_tokens(analysis: &Analysis) -> Vec<HighlightToken> {
 fn string_or_symbol(analysis: &Analysis, token: &SyntaxToken) -> (TokenType, u32) {
     // A quoted label or symbol, like `"_f g":`, is a name, not a string.
     let start = token_range(token).start;
-    match analysis
-        .symbols()
-        .iter()
-        .find(|s| s.origin.is_none() && s.range.start == start)
-    {
+    match analysis.definition_at(start) {
         Some(_) => (TokenType::Function, DECLARATION),
         None if analysis.reference_at(start).is_some() => (TokenType::Function, 0),
         None => (TokenType::String, 0),
@@ -1109,9 +1105,8 @@ fn classify_ident(analysis: &Analysis, token: &SyntaxToken) -> Option<(TokenType
         _ => {}
     }
     if let Some(symbol) = analysis
-        .symbols()
-        .iter()
-        .find(|s| s.origin.is_none() && s.range.start == start)
+        .definition_at(start)
+        .map(|i| &analysis.symbols()[i])
     {
         return Some((
             symbol_type(symbol.kind),

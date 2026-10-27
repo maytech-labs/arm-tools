@@ -4,6 +4,8 @@
 #[cfg(test)]
 mod fuzz;
 mod ide;
+#[cfg(test)]
+mod perf;
 mod server;
 mod workspace;
 

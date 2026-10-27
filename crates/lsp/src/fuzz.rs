@@ -455,3 +455,41 @@ fn bugs_are_answered_not_fatal() {
     );
     session.finish();
 }
+
+#[test]
+fn a_burst_of_edits_is_analyzed_once() {
+    let mut session = Session::start(true);
+    let uri = "file:///armls-fuzz/burst.s";
+    // Big enough that analysis takes longer than sending the burst.
+    let body = "_f:\n    add x0, x0, #1\n".repeat(2000);
+    session.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "asm", "version": 1, "text": body } }),
+    );
+    for version in 2..52 {
+        let text = format!("{body}    mov x{}, #0\n", version % 28);
+        session.notify(
+            "textDocument/didChange",
+            json!({
+                "textDocument": { "uri": uri, "version": version },
+                "contentChanges": [{ "text": text }],
+            }),
+        );
+    }
+    let last_line = body.lines().count();
+    let hover = session.response(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": last_line, "character": 9 } }),
+    );
+    let published = session
+        .notifications
+        .iter()
+        .filter(|n| n.method == "textDocument/publishDiagnostics")
+        .count();
+    assert!(published < 25, "{published} analyses for 51 edits");
+    // The last edit wins: x23 is the register in version 51.
+    let value = hover.response_result.expect("hover");
+    let text = value["contents"]["value"].as_str().unwrap_or_default();
+    assert!(text.contains("x23"), "{text}");
+    session.finish();
+}

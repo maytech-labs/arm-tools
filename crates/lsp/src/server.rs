@@ -70,7 +70,17 @@ pub fn run(connection: &Connection) -> Result<bool> {
         documents: HashMap::new(),
         index: crate::workspace::Index::scan(&roots),
     };
-    for message in &connection.receiver {
+    // Messages read ahead while coalescing edits, to handle next.
+    let mut backlog: std::collections::VecDeque<Message> = std::collections::VecDeque::new();
+    loop {
+        let message = match backlog.pop_front() {
+            Some(message) => message,
+            None => match connection.receiver.recv() {
+                Ok(message) => message,
+                Err(_) => break,
+            },
+        };
+        let message = coalesce(message, connection, &mut backlog);
         match message {
             Message::Request(request) => {
                 if connection.handle_shutdown(&request)? {
@@ -101,6 +111,38 @@ pub fn run(connection: &Connection) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// With full sync, each change carries the whole text, so a burst of
+/// changes to one document already queued needs only the last one analyzed.
+/// Anything else read while looking ahead goes to the backlog, in order.
+fn coalesce(
+    message: Message,
+    connection: &Connection,
+    backlog: &mut std::collections::VecDeque<Message>,
+) -> Message {
+    let changed_uri = |m: &Message| match m {
+        Message::Notification(n) if n.method == DidChangeTextDocument::METHOD => {
+            n.params["textDocument"]["uri"].as_str().map(str::to_string)
+        }
+        _ => None,
+    };
+    let Some(uri) = changed_uri(&message) else {
+        return message;
+    };
+    if !backlog.is_empty() {
+        return message;
+    }
+    let mut latest = message;
+    while let Ok(next) = connection.receiver.try_recv() {
+        if changed_uri(&next).as_deref() == Some(uri.as_str()) {
+            latest = next;
+        } else {
+            backlog.push_back(next);
+            break;
+        }
+    }
+    latest
 }
 
 /// The project directories to index: the client's workspace folders, or
@@ -323,11 +365,11 @@ impl Server<'_> {
             Ok(config) => (config, true, None),
             Err(error) => (arm_lint::Config::default(), false, Some(error)),
         };
-        if let Some(path) = &path {
-            self.index.update(path, text);
-        }
         let checked = arm_lint::check(text, path.as_deref(), &config, open, lint);
         let analysis = checked.analysis;
+        if let Some(path) = &path {
+            self.index.update_from(path, &analysis);
+        }
         let mut found = checked.diagnostics;
         if let Some(error) = config_error {
             found.push(arm_sema::Diagnostic {

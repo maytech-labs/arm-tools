@@ -43,3 +43,4 @@
 - [0032 Completion snippets for Apple's conventions](decisions/0032-snippets.md)
 - [0033 Call hierarchy from the control-flow graph's functions](decisions/0033-call-hierarchy.md)
 - [0034 Index C function definitions by scanning](decisions/0034-c-functions.md)
+- [0035 Keeping armls fast on large files and projects](decisions/0035-performance.md)

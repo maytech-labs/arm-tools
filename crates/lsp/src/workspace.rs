@@ -55,11 +55,29 @@ impl Index {
         }
         paths.sort();
         paths.dedup();
-        for path in paths.into_iter().take(MAX_FILES) {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                index.update(&path, &text);
-            }
-        }
+        paths.truncate(MAX_FILES);
+        // Analysis is the cost; spread it over the cores.
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let chunk = paths.len().div_ceil(threads).max(1);
+        let parts: Vec<Vec<(PathBuf, IndexedFile)>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = paths
+                .chunks(chunk)
+                .map(|part| {
+                    scope.spawn(move || {
+                        let mut one = Index::default();
+                        for path in part {
+                            if let Ok(text) = std::fs::read_to_string(path) {
+                                one.update(path, &text);
+                            }
+                        }
+                        one.files.into_iter().collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            // A worker that panicked loses its files, not the server.
+            workers.into_iter().filter_map(|w| w.join().ok()).collect()
+        });
+        index.files.extend(parts.into_iter().flatten());
         index
     }
 
@@ -76,6 +94,12 @@ impl Index {
             summarize(&Analysis::new(text))
         };
         self.files.insert(path.to_path_buf(), file);
+    }
+
+    /// Reindexes an assembly file from an analysis already made, as armls
+    /// has after each edit.
+    pub fn update_from(&mut self, path: &Path, analysis: &Analysis) {
+        self.files.insert(path.to_path_buf(), summarize(analysis));
     }
 
     /// Reindexes a file from disk, or drops it if it's gone.

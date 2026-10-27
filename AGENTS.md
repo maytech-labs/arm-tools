@@ -48,6 +48,7 @@ Two kinds of test, plus an oracle ([0007](docs/decisions/0007-testing.md)).
 - **Oracle tests** run `.s` fixtures through Apple's clang and check we agree on what's valid. They run on macOS and skip elsewhere.
 - **armls tests** drive the real binary over stdio with timeouts (`crates/lsp/tests/lsp.rs`). Editor features live in `crates/lsp/src/ide.rs` as pure functions with unit tests. After changing the server, also run `cargo xtask nvim-smoke`.
 - **Fuzzed edit session** (`crates/lsp/src/fuzz.rs`): the real server, in memory, takes random edits to the examples and corpus and every request after each; it must answer all of them without a panic. Formatting mutated files must change only whitespace and be stable. Before a release, soak it: `ARMLS_FUZZ=300 cargo test -p arm-lsp --release soak`. A failure names its seed.
+- **Performance:** `ARMLS_PERF=<file.s> cargo test -p arm-lsp --release perf -- --nocapture` times each feature on a file; `ARMLS_PERF_SCAN=<dir>` times project indexing. Budgets and the last numbers are in [0035](docs/decisions/0035-performance.md).
 - **Snapshot tests** for parser output live in `crates/syntax/tests/data/parser/`: a `.s` input beside its `.tree`. After a deliberate change, run `UPDATE_SNAPSHOTS=1 cargo test -p arm-syntax --test parse` and read the diff before committing.
 - **Corpus:** every `.s` in `crates/syntax/tests/data/corpus/` must parse without errors and assemble with clang. Lines in `tests/data/invalid.s` must be reported by us and rejected by clang.
 
