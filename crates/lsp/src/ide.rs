@@ -662,6 +662,31 @@ pub fn rename(
     new_name: &str,
 ) -> Result<Vec<(Range<usize>, String)>, String> {
     prepare_rename(analysis, offset)?;
+    check_new_name(new_name)?;
+    let symbol = analysis.symbol_at(offset).ok_or("no symbol here")?;
+    let kind = analysis.symbols()[symbol].kind;
+    if analysis
+        .symbols()
+        .iter()
+        .any(|s| s.kind == kind && s.name == new_name)
+    {
+        return Err(format!("'{new_name}' is already defined in this file"));
+    }
+    Ok(references(analysis, offset, true)
+        .into_iter()
+        .map(|range| (range, new_name.to_string()))
+        .collect())
+}
+
+/// The range of a use of a name this file doesn't define, which rename can
+/// change if another file of the project defines it.
+pub fn prepare_rename_external(analysis: &Analysis, offset: usize) -> Option<Range<usize>> {
+    let reference = analysis.reference_at(offset)?;
+    (reference.symbol.is_none() && !is_register(&reference.name)).then(|| reference.range.clone())
+}
+
+/// Whether `new_name` can name a symbol.
+pub fn check_new_name(new_name: &str) -> Result<(), String> {
     let valid = new_name
         .chars()
         .next()
@@ -677,19 +702,7 @@ pub fn rename(
     if is_register(new_name) || arm_isa::is_instruction(new_name) {
         return Err(format!("'{new_name}' is a register or instruction name"));
     }
-    let symbol = analysis.symbol_at(offset).ok_or("no symbol here")?;
-    let kind = analysis.symbols()[symbol].kind;
-    if analysis
-        .symbols()
-        .iter()
-        .any(|s| s.kind == kind && s.name == new_name)
-    {
-        return Err(format!("'{new_name}' is already defined in this file"));
-    }
-    Ok(references(analysis, offset, true)
-        .into_iter()
-        .map(|range| (range, new_name.to_string()))
-        .collect())
+    Ok(())
 }
 
 fn is_register(name: &str) -> bool {
@@ -1374,6 +1387,17 @@ mod tests {
         let local = "_f: nop\n_g: nop\nb _f\n1: b 1b\n".find("1b").expect("1b");
         assert!(prepare_rename(&analysis, local).is_err());
         assert!(prepare_rename(&analysis, 12).is_err());
+    }
+
+    #[test]
+    fn external_names_can_be_renamed_by_the_server() {
+        let text = "bl _helper\nmov x0, x1\n";
+        let analysis = Analysis::new(text);
+        assert_eq!(prepare_rename_external(&analysis, 5), Some(3..10));
+        assert!(prepare_rename_external(&analysis, text.find("x1").expect("x1")).is_none());
+        assert!(check_new_name("_assist").is_ok());
+        assert!(check_new_name("add").is_err());
+        assert!(check_new_name("").is_err());
     }
 
     #[test]

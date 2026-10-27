@@ -13,7 +13,7 @@ What you get, with the default keymaps of Neovim 0.11:
 | Go to definition, also into other files of the project | `Ctrl-]` or `gd` if you map it |
 | Search global labels across the project | `:lua vim.lsp.buf.workspace_symbol()` |
 | References | `grr` |
-| Rename | `grn` |
+| Rename, across files for global labels | `grn` |
 | Outline | `gO` |
 | Completion: only what fits the operand (conditions after `csel`, base registers after `[`) | `Ctrl-x Ctrl-o`, or your completion plugin |
 | Signature help: the instruction's forms, with the operand you're on | `Ctrl-s` in insert mode |

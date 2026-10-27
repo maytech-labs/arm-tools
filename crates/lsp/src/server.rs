@@ -521,7 +521,16 @@ impl Server<'_> {
                 let Some((doc, offset)) = self.at(&params) else {
                     return Ok(ok(id, None::<PrepareRenameResponse>));
                 };
-                let range = ide::prepare_rename(&doc.analysis, offset).map_err(Failure::Refused)?;
+                let range = match ide::prepare_rename(&doc.analysis, offset) {
+                    Ok(range) => range,
+                    // A global label another file defines.
+                    Err(error) => ide::prepare_rename_external(&doc.analysis, offset)
+                        .filter(|_| {
+                            self.linked_name(&doc.analysis, offset, &params.text_document.uri)
+                                .is_some()
+                        })
+                        .ok_or(Failure::Refused(error))?,
+                };
                 let range = self.range(&doc.analysis, range);
                 Ok(ok(id, Some(PrepareRenameResponse::Range(range))))
             }
@@ -531,8 +540,20 @@ impl Server<'_> {
                 let Some((doc, offset)) = self.at(at) else {
                     return Ok(ok(id, None::<WorkspaceEdit>));
                 };
-                let edits = ide::rename(&doc.analysis, offset, &params.new_name)
-                    .map_err(Failure::Refused)?
+                let uri = &at.text_document.uri;
+                let new_name = &params.new_name;
+                let linked = self.linked_name(&doc.analysis, offset, uri);
+                let here = match &linked {
+                    Some(_) if doc.analysis.symbol_at(offset).is_none() => {
+                        ide::check_new_name(new_name).map_err(Failure::Refused)?;
+                        ide::references(&doc.analysis, offset, true)
+                            .into_iter()
+                            .map(|range| (range, new_name.clone()))
+                            .collect()
+                    }
+                    _ => ide::rename(&doc.analysis, offset, new_name).map_err(Failure::Refused)?,
+                };
+                let edits: Vec<TextEdit> = here
                     .into_iter()
                     .map(|(range, new_text)| TextEdit {
                         range: self.range(&doc.analysis, range),
@@ -541,7 +562,27 @@ impl Server<'_> {
                     .collect();
                 // Uri's interior is never mutated; lsp-types requires it as the key.
                 #[allow(clippy::mutable_key_type)]
-                let changes = HashMap::from([(at.text_document.uri.clone(), edits)]);
+                let mut changes = HashMap::from([(uri.clone(), edits)]);
+                // A global label: every file of the project that defines or uses it.
+                if let Some(name) = linked {
+                    if let Some(taken) = self.index.definitions(new_name, None).first() {
+                        return Err(Failure::Refused(format!(
+                            "'{new_name}' is already a global label in {}",
+                            taken.path.display()
+                        )));
+                    }
+                    let path = file_path(uri).map(|p| arm_sema::normalize(&p));
+                    let mut places = self.index.references(&name, path.as_deref());
+                    places.extend(self.index.definitions(&name, path.as_deref()));
+                    for place in places {
+                        if let Some(location) = self.location(&place) {
+                            changes.entry(location.uri).or_default().push(TextEdit {
+                                range: location.range,
+                                new_text: new_name.clone(),
+                            });
+                        }
+                    }
+                }
                 Ok(ok(
                     id,
                     Some(WorkspaceEdit {
@@ -689,6 +730,17 @@ impl Server<'_> {
         }
         let reference = analysis.reference_at(offset)?;
         reference.symbol.is_none().then(|| reference.name.clone())
+    }
+
+    /// The global label at `offset` if renaming it reaches other files: one
+    /// this file defines, or one another file defines.
+    fn linked_name(&self, analysis: &Analysis, offset: usize, uri: &Uri) -> Option<String> {
+        let name = self.global_name(analysis, offset)?;
+        if analysis.symbol_at(offset).is_some() {
+            return Some(name);
+        }
+        let here = file_path(uri).map(|p| arm_sema::normalize(&p));
+        (!self.index.definitions(&name, here.as_deref()).is_empty()).then_some(name)
     }
 
     /// Where a name this file doesn't define is defined elsewhere in the project.

@@ -609,11 +609,50 @@ fn navigation_between_linked_files() {
     assert_eq!(symbols[0]["name"], "_helper");
     assert_eq!(symbols[0]["location"]["uri"], util_uri.as_str());
 
-    // Renaming the label in an unsaved buffer updates navigation.
+    // Rename from the call renames it in util.s too, which isn't open.
+    let prepared = client.request("textDocument/prepareRename", at_call.clone())["result"].clone();
+    assert_eq!(prepared["start"], start(2, 7));
+    let mut params = at_call.clone();
+    params["newName"] = json!("_assist");
+    let edit = client.request("textDocument/rename", params)["result"].clone();
+    // main.s: the call. util.s: .globl and the label.
+    assert_eq!(
+        (count_in(&edit, &main_uri), count_in(&edit, &util_uri)),
+        (1, 2),
+        "{edit}"
+    );
+    assert_eq!(edit["changes"][&util_uri][0]["newText"], "_assist");
+    // A name another file already defines is refused.
+    let mut params = at_call.clone();
+    params["newName"] = json!("_main");
+    let taken = client.request("textDocument/rename", params);
+    let message = taken["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("already a global label"), "{taken}");
+    // Unknown names stay unrenameable.
+    client.notify(
+        "textDocument/didChange",
+        json!({
+            "textDocument": { "uri": main_uri, "version": 2 },
+            "contentChanges": [{ "text": ".globl _main\n_main:\n    bl _printf\n    bl _helper\n" }],
+        }),
+    );
+    let at_printf = json!({ "textDocument": { "uri": main_uri }, "position": start(2, 9) });
+    let refused = client.request("textDocument/prepareRename", at_printf);
+    assert!(refused.get("error").is_some(), "{refused}");
+    // From the definition, renaming reaches the caller.
     client.notify(
         "textDocument/didOpen",
         json!({ "textDocument": { "uri": util_uri, "languageId": "asm", "version": 1, "text": util } }),
     );
+    let at_label = json!({ "textDocument": { "uri": util_uri }, "position": start(1, 2), "newName": "_assist" });
+    let edit = client.request("textDocument/rename", at_label)["result"].clone();
+    assert_eq!(
+        (count_in(&edit, &util_uri), count_in(&edit, &main_uri)),
+        (2, 1),
+        "{edit}"
+    );
+
+    // Renaming the label in an unsaved buffer updates navigation.
     client.notify(
         "textDocument/didChange",
         json!({
@@ -621,10 +660,15 @@ fn navigation_between_linked_files() {
             "contentChanges": [{ "text": ".globl _other\n_other:\n    ret\n" }],
         }),
     );
-    let gone = client.request("textDocument/definition", at_call)["result"].clone();
+    let at_helper = json!({ "textDocument": { "uri": main_uri }, "position": start(3, 9) });
+    let gone = client.request("textDocument/definition", at_helper)["result"].clone();
     assert!(gone.is_null(), "{gone}");
     assert!(client.shutdown().success());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+fn count_in(edit: &Value, uri: &str) -> usize {
+    edit["changes"][uri].as_array().map_or(0, Vec::len)
 }
 
 #[test]
