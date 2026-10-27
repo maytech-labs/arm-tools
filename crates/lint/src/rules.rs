@@ -156,10 +156,7 @@ pub(crate) const RULES: &[RuleInfo] = &[
     },
 ];
 
-pub(crate) fn run(
-    analysis: &Analysis,
-    externals: &HashMap<String, crate::types::Signature>,
-) -> Vec<Finding> {
+pub(crate) fn run(analysis: &Analysis, externals: &crate::CDefinitions) -> Vec<Finding> {
     let cfg = Cfg::new(analysis);
     let mut out = Vec::new();
     crate::types::run(analysis, &cfg, externals, &mut out);

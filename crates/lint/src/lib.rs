@@ -16,6 +16,7 @@ use arm_sema::{Analysis, Diagnostic, Encoding, Severity};
 use arm_syntax::SyntaxKind;
 
 pub use calls::{Call, CallGraph, FunctionSpan, call_graph};
+pub use cdecl::CDefinitions;
 pub use check::{Checked, check};
 pub use config::{Config, Level};
 pub use types::{Annotations, Signature, Ty, Types, annotations, types_at};
@@ -44,7 +45,11 @@ pub fn rule(id: &str) -> Option<&'static RuleInfo> {
 /// Runs every enabled rule on a file. Findings on a line with
 /// `; armtool: allow(rule-id)`, or right below one, are dropped.
 pub fn lint(analysis: &Analysis, config: &Config) -> Vec<Diagnostic> {
-    lint_with(analysis, config, &cdecl::libc(analysis.platform()))
+    let externals = CDefinitions {
+        signatures: cdecl::libc(analysis.platform()),
+        structs: Default::default(),
+    };
+    lint_with(analysis, config, &externals)
 }
 
 /// Like [`lint`], with the signatures of functions defined elsewhere: the C
@@ -52,7 +57,7 @@ pub fn lint(analysis: &Analysis, config: &Config) -> Vec<Diagnostic> {
 pub fn lint_with(
     analysis: &Analysis,
     config: &Config,
-    externals: &std::collections::HashMap<String, Signature>,
+    externals: &CDefinitions,
 ) -> Vec<Diagnostic> {
     let allows = allow_comments(analysis);
     let line_of = |offset: usize| {

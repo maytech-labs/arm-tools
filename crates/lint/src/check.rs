@@ -98,9 +98,14 @@ fn findings(
     if lint {
         // The C library, then the project's own C functions over it.
         let platform = analysis.platform();
-        let mut externals = crate::cdecl::libc(platform);
+        let mut externals = crate::CDefinitions {
+            signatures: crate::cdecl::libc(platform),
+            structs: Default::default(),
+        };
         if let Some(root) = path.and_then(|p| config.project_root(p)) {
-            externals.extend(crate::cdecl::project(&root, platform));
+            let project = crate::cdecl::project(&root, platform);
+            externals.signatures.extend(project.signatures);
+            externals.structs = project.structs;
         }
         out.extend(crate::lint_with(analysis, config, &externals));
     }

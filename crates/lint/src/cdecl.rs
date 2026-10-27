@@ -9,10 +9,24 @@ use std::time::{Duration, Instant};
 
 use arm_isa::Platform;
 
-use crate::types::{Signature, Ty};
+use crate::types::{Layout, Signature, Ty};
+
+/// Typedef names for structs, to the struct's name: `node_t` to `node`.
+pub type Aliases = HashMap<String, String>;
+
+/// What the project's C defines: functions and structs.
+#[derive(Debug, Clone, Default)]
+pub struct CDefinitions {
+    pub signatures: HashMap<String, Signature>,
+    pub structs: HashMap<String, Layout>,
+}
+
+fn c_type_plain(text: &str) -> Option<Option<Ty>> {
+    c_type(text, &Aliases::new())
+}
 
 /// The C type of a parameter or result, as far as registers care.
-fn c_type(text: &str) -> Option<Option<Ty>> {
+fn c_type(text: &str, aliases: &Aliases) -> Option<Option<Ty>> {
     // Some(None) is void.
     let pointers = text.matches('*').count();
     let words: Vec<&str> = text
@@ -50,8 +64,14 @@ fn c_type(text: &str) -> Option<Option<Ty>> {
         | "uintptr_t" | "uintmax_t" => int(false, 64),
         "float" => Some(Some(Ty::Float { bits: 32 })),
         "double" => Some(Some(Ty::Float { bits: 64 })),
-        // A struct or a typedef we don't know: only its pointers are useful.
-        _ => None,
+        _ => match base.strip_prefix("struct ") {
+            Some(name) => Some(Some(Ty::Struct(name.trim().to_string()))),
+            // A typedef of a struct, or one we don't know: then only its
+            // pointers are useful.
+            None => aliases
+                .get(&base)
+                .map(|name| Some(Ty::Struct(name.clone()))),
+        },
     };
     if pointers == 0 {
         return scalar;
@@ -89,7 +109,7 @@ fn param_type(param: &str) -> &str {
             | "void"
             | "bool"
             | "_Bool"
-    ) || (name_start == 0 && c_type(name).is_some());
+    ) || (name_start == 0 && c_type_plain(name).is_some());
     if name.is_empty() || type_word {
         param
     } else {
@@ -101,6 +121,11 @@ fn param_type(param: &str) -> &str {
 /// platform's linker (`_printf` on Darwin). None if a type isn't one we can
 /// place in registers.
 pub fn parse_prototype(text: &str, platform: Platform) -> Option<Signature> {
+    parse_prototype_with(text, platform, &Aliases::new())
+}
+
+/// Like [`parse_prototype`], knowing the project's struct typedefs.
+fn parse_prototype_with(text: &str, platform: Platform, aliases: &Aliases) -> Option<Signature> {
     let open = text.find('(')?;
     let close = text.rfind(')')?;
     let head = text[..open].trim();
@@ -111,7 +136,11 @@ pub fn parse_prototype(text: &str, platform: Platform) -> Option<Signature> {
     if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) {
         return None;
     }
-    let ret = c_type(&head[..name_start])?;
+    let ret = c_type(&head[..name_start], aliases)?;
+    // A struct by value comes back in memory, not x0.
+    if matches!(ret, Some(Ty::Struct(_))) {
+        return None;
+    }
     let mut params = Vec::new();
     let mut variadic = false;
     let (mut ints, mut floats) = (0, 0);
@@ -123,9 +152,10 @@ pub fn parse_prototype(text: &str, platform: Platform) -> Option<Signature> {
                 variadic = true;
                 continue;
             }
-            let ty = c_type(param_type(param))?;
-            // void as a parameter type: not a function we can place.
-            let ty = ty?;
+            let ty = c_type(param_type(param), aliases)?;
+            // void as a parameter type, or a struct by value: not a
+            // function we can place in registers.
+            let ty = ty.filter(|t| !matches!(t, Ty::Struct(_)))?;
             let register = if matches!(ty, Ty::Float { .. }) {
                 floats += 1;
                 format!("v{}", floats - 1)
@@ -212,7 +242,12 @@ pub fn libc(platform: Platform) -> HashMap<String, Signature> {
 /// at the top level, ahead of `;` or `{`. Comments, strings, and
 /// preprocessor lines are skipped; `static` functions too, since assembly
 /// in another file can't call them.
+#[cfg(test)]
 pub fn prototypes(text: &str, platform: Platform) -> Vec<Signature> {
+    prototypes_with(text, platform, &Aliases::new())
+}
+
+fn prototypes_with(text: &str, platform: Platform, aliases: &Aliases) -> Vec<Signature> {
     let mut out = Vec::new();
     let mut statement = String::new();
     let mut depth = 0usize;
@@ -265,7 +300,7 @@ pub fn prototypes(text: &str, platform: Platform) -> Vec<Signature> {
             }
             '{' => {
                 if depth == 0 {
-                    finish(&statement, platform, &mut out);
+                    finish(&statement, platform, aliases, &mut out);
                     statement.clear();
                 }
                 depth += 1;
@@ -277,7 +312,7 @@ pub fn prototypes(text: &str, platform: Platform) -> Vec<Signature> {
                 }
             }
             ';' if depth == 0 => {
-                finish(&statement, platform, &mut out);
+                finish(&statement, platform, aliases, &mut out);
                 statement.clear();
             }
             _ if depth == 0 => statement.push(c),
@@ -288,7 +323,7 @@ pub fn prototypes(text: &str, platform: Platform) -> Vec<Signature> {
     out
 }
 
-fn finish(statement: &str, platform: Platform, out: &mut Vec<Signature>) {
+fn finish(statement: &str, platform: Platform, aliases: &Aliases, out: &mut Vec<Signature>) {
     let statement = statement.trim();
     let first = statement.split_whitespace().next();
     // Not `static` (other files can't call it), not a typedef, a variable,
@@ -300,15 +335,260 @@ fn finish(statement: &str, platform: Platform, out: &mut Vec<Signature>) {
     {
         return;
     }
-    if let Some(signature) = parse_prototype(statement, platform) {
+    if let Some(signature) = parse_prototype_with(statement, platform, aliases) {
         out.push(signature);
     }
 }
 
-/// Signatures from the C files under a project root, cached for a few
-/// seconds so an editor can ask on every edit.
-pub fn project(root: &Path, platform: Platform) -> HashMap<String, Signature> {
-    type Cache = HashMap<(PathBuf, Platform), (Instant, HashMap<String, Signature>)>;
+/// C text with comments, string and character literals, and preprocessor
+/// lines blanked out, so the rest can be read by structure.
+fn clean(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut line_start = true;
+    while let Some(c) = chars.next() {
+        match c {
+            '#' if line_start => {
+                let mut escaped = false;
+                for c in chars.by_ref() {
+                    if c == '\n' && !escaped {
+                        break;
+                    }
+                    escaped = c == '\\';
+                }
+                out.push('\n');
+                continue;
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+                out.push('\n');
+                line_start = true;
+                continue;
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut last = ' ';
+                for c in chars.by_ref() {
+                    if last == '*' && c == '/' {
+                        break;
+                    }
+                    last = c;
+                }
+                out.push(' ');
+                continue;
+            }
+            '"' | '\'' => {
+                let mut escaped = false;
+                for d in chars.by_ref() {
+                    if d == c && !escaped {
+                        break;
+                    }
+                    escaped = d == '\\' && !escaped;
+                }
+                out.push('0');
+            }
+            c => out.push(c),
+        }
+        line_start = c == '\n' || (line_start && c.is_whitespace());
+    }
+    out
+}
+
+/// A struct definition in C: its name, its fields as (name, C type, array
+/// length), and the typedef name it's given, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CStruct {
+    name: String,
+    fields: Vec<(String, String, u64)>,
+    alias: Option<String>,
+}
+
+/// `struct name { ... };` and `typedef struct [name] { ... } alias;` at the
+/// top level. Structs we can't lay out exactly (unions, bit-fields, nested
+/// definitions, multi-dimensional arrays) are left out.
+fn c_structs(text: &str) -> Vec<CStruct> {
+    let text = clean(text);
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut statement_start = 0;
+    let mut i = 0;
+    let bytes = text.as_bytes();
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => statement_start = i + 1,
+            's' if depth == 0
+                && text[i..].starts_with("struct")
+                && !text[..i].ends_with(is_ident)
+                && !text[i + 6..].starts_with(is_ident) =>
+            {
+                let typedef = text[statement_start..i]
+                    .split_whitespace()
+                    .any(|w| w == "typedef");
+                if let Some((found, end)) = struct_at(&text, i + 6, typedef) {
+                    out.extend(found);
+                    statement_start = end;
+                    i = end;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// A struct definition after the `struct` keyword at `from`: the struct (if
+/// it can be laid out) and where its statement ends.
+fn struct_at(text: &str, from: usize, typedef: bool) -> Option<(Option<CStruct>, usize)> {
+    let rest = &text[from..];
+    let name_len = rest
+        .trim_start()
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))?;
+    let skipped = rest.len() - rest.trim_start().len();
+    let name = rest[skipped..skipped + name_len].to_string();
+    let after = rest[skipped + name_len..].trim_start();
+    if !after.starts_with('{') {
+        return None;
+    }
+    let open = from + (rest.len() - after.len());
+    let mut depth = 0;
+    let close = text[open..].char_indices().find_map(|(k, c)| {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + k);
+                }
+            }
+            _ => {}
+        }
+        None
+    })?;
+    let end = text[close..]
+        .find(';')
+        .map_or(text.len(), |k| close + k + 1);
+    let declarators = text[close + 1..end.saturating_sub(1)].trim();
+    let alias = typedef
+        .then(|| declarators.split(',').next().unwrap_or("").trim())
+        .filter(|a| !a.is_empty() && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .map(str::to_string);
+    let name = if name.is_empty() {
+        alias.clone()?
+    } else {
+        name
+    };
+    let body = &text[open + 1..close];
+    if body.contains('{') || body.contains(':') || body.contains("union") {
+        return Some((None, end));
+    }
+    let mut fields = Vec::new();
+    for declaration in body.split(';').map(str::trim).filter(|d| !d.is_empty()) {
+        let Some(parsed) = field_declaration(declaration) else {
+            return Some((None, end));
+        };
+        fields.extend(parsed);
+    }
+    Some((
+        Some(CStruct {
+            name,
+            fields,
+            alias,
+        }),
+        end,
+    ))
+}
+
+/// `int x, *y, z[4]` into (name, C type, count) for each declarator.
+fn field_declaration(declaration: &str) -> Option<Vec<(String, String, u64)>> {
+    let parts: Vec<&str> = declaration.split(',').collect();
+    let first = parts.first()?.trim();
+    let (base, _) = declarator(first)?;
+    let base = base
+        .trim_end_matches(|c: char| c == '*' || c.is_whitespace())
+        .to_string();
+    let mut out = Vec::new();
+    for part in &parts {
+        // The first part carries the base type; each carries its own stars.
+        let (before, (name, count)) = declarator(part.trim())?;
+        let stars = before.matches('*').count();
+        out.push((name, format!("{base} {}", "*".repeat(stars)), count));
+    }
+    Some(out)
+}
+
+/// A declarator's name and array length, and the text before the name:
+/// `char *name[16]` is ("char *", ("name", 16)).
+fn declarator(text: &str) -> Option<(&str, (String, u64))> {
+    let (text, count) = match text.strip_suffix(']') {
+        Some(rest) => {
+            let (before, n) = rest.rsplit_once('[')?;
+            if before.trim_end().ends_with(']') {
+                return None;
+            }
+            (before.trim_end(), n.trim().parse::<u64>().ok()?)
+        }
+        None => (text, 1),
+    };
+    let name_start = text
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .map_or(0, |i| i + 1);
+    let name = &text[name_start..];
+    if name.is_empty() {
+        return None;
+    }
+    Some((&text[..name_start], (name.to_string(), count)))
+}
+
+/// Lays out C structs, with what each needs declared first.
+fn layouts(found: &[CStruct], aliases: &Aliases) -> HashMap<String, Layout> {
+    let mut structs: HashMap<String, Layout> = HashMap::new();
+    let mut pending: Vec<&CStruct> = found.iter().collect();
+    // Each pass lays out the structs whose fields are all known.
+    loop {
+        let before = pending.len();
+        pending.retain(|s| {
+            let mut fields = Vec::new();
+            for (name, ctype, count) in &s.fields {
+                let Some(Some(ty)) = c_type(ctype, aliases) else {
+                    return false;
+                };
+                let ty = ty.to_string();
+                fields.push(if *count > 1 {
+                    format!("{name}: {ty}[{count}]")
+                } else {
+                    format!("{name}: {ty}")
+                });
+            }
+            let text = format!("{} {{ {} }}", s.name, fields.join(", "));
+            match crate::types::parse_struct(&text, &structs) {
+                Ok((name, layout)) => {
+                    structs.insert(name, layout);
+                    false
+                }
+                Err(_) => true,
+            }
+        });
+        if pending.len() == before {
+            break;
+        }
+    }
+    structs
+}
+
+/// Functions and structs from the C files under a project root, cached
+/// for a few seconds so an editor can ask on every edit.
+pub fn project(root: &Path, platform: Platform) -> CDefinitions {
+    type Cache = HashMap<(PathBuf, Platform), (Instant, CDefinitions)>;
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let key = (root.to_path_buf(), platform);
@@ -320,18 +600,38 @@ pub fn project(root: &Path, platform: Platform) -> HashMap<String, Signature> {
     }
     let mut files = Vec::new();
     walk(root, &mut files);
-    let mut found = HashMap::new();
-    for file in files {
-        if let Ok(text) = std::fs::read_to_string(&file) {
-            for signature in prototypes(&text, platform) {
-                found.entry(signature.name.clone()).or_insert(signature);
-            }
-        }
-    }
+    let texts: Vec<String> = files
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok())
+        .collect();
+    let found = definitions(&texts, platform);
     if let Ok(mut cache) = cache.lock() {
         cache.insert(key, (Instant::now(), found.clone()));
     }
     found
+}
+
+/// Functions and structs from C texts: structs and typedefs first, so
+/// prototypes can name them.
+fn definitions(texts: &[String], platform: Platform) -> CDefinitions {
+    let found: Vec<CStruct> = texts.iter().flat_map(|t| c_structs(t)).collect();
+    let aliases: Aliases = found
+        .iter()
+        .filter_map(|s| Some((s.alias.clone()?, s.name.clone())))
+        .collect();
+    let structs = layouts(&found, &aliases);
+    let mut signatures = HashMap::new();
+    for text in texts {
+        for signature in prototypes_with(text, platform, &aliases) {
+            signatures
+                .entry(signature.name.clone())
+                .or_insert(signature);
+        }
+    }
+    CDefinitions {
+        signatures,
+        structs,
+    }
 }
 
 /// C headers and sources, skipping hidden and build directories.
@@ -414,7 +714,10 @@ mod tests {
         // A struct by value can't be placed: no signature.
         assert!(parse_prototype("int f(struct point p)", Platform::Darwin).is_none());
         // A pointer to one can.
-        assert_eq!(darwin("int f(struct point *p)").params[0].1, Ty::Ptr(None));
+        assert_eq!(
+            darwin("int f(struct point *p)").params[0].1.to_string(),
+            "ptr<point>"
+        );
     }
 
     #[test]
@@ -439,6 +742,59 @@ unsigned long hash(const unsigned char *s,
             .map(|s| s.name)
             .collect();
         assert_eq!(names, ["add2", "name", "hash"]);
+    }
+
+    #[test]
+    fn finds_struct_definitions() {
+        let text = r#"
+#include <stdint.h>
+/* struct fake { int a; }; */
+struct point { int32_t x, y; };
+typedef struct node {
+    struct point pos;
+    struct node *next;   // the list
+    unsigned long id;
+    char tag[4];
+} node_t;
+typedef struct { double re, im; } complex_t;
+struct flags { unsigned a : 1; unsigned b : 3; };
+union both { int i; float f; };
+struct outer { struct { int x; } inner; };
+struct grid { int cells[2][3]; };
+struct point origin = { 0, 0 };
+node_t *find(node_t *head, unsigned long id);
+long sum(struct point p);
+"#;
+        let found = c_structs(text);
+        let names: Vec<&str> = found.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["point", "node", "complex_t"], "{found:?}");
+        let fields: Vec<(&str, &str, u64)> = found[1]
+            .fields
+            .iter()
+            .map(|(n, t, c)| (n.as_str(), t.as_str(), *c))
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                ("pos", "struct point ", 1),
+                ("next", "struct node *", 1),
+                ("id", "unsigned long ", 1),
+                ("tag", "char ", 4)
+            ]
+        );
+        let defs = definitions(&[text.to_string()], Platform::Linux);
+        let node = &defs.structs["node"];
+        assert_eq!((node.size, node.align), (32, 8));
+        assert_eq!(defs.structs["complex_t"].size, 16);
+        assert!(!defs.structs.contains_key("flags") && !defs.structs.contains_key("grid"));
+        // Prototypes see through the typedef; a struct by value is skipped.
+        let find = &defs.signatures["find"];
+        assert_eq!(find.params[0].1.to_string(), "ptr<node>");
+        assert_eq!(
+            find.ret.as_ref().map(ToString::to_string).as_deref(),
+            Some("ptr<node>")
+        );
+        assert!(!defs.signatures.contains_key("sum"));
     }
 
     #[test]

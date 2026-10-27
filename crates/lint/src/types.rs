@@ -172,7 +172,10 @@ fn size_align(ty: &Ty, structs: &HashMap<String, Layout>) -> Option<(u64, u64)> 
 }
 
 /// `point { x: i32, y: i32, tag: u8[4] }`.
-fn parse_struct(text: &str, structs: &HashMap<String, Layout>) -> Result<(String, Layout), String> {
+pub(crate) fn parse_struct(
+    text: &str,
+    structs: &HashMap<String, Layout>,
+) -> Result<(String, Layout), String> {
     let open = text
         .find('{')
         .ok_or("write struct name { field: T, ... }")?;
@@ -264,6 +267,9 @@ pub struct Annotations {
     pub errors: Vec<(Range<usize>, String)>,
     /// Structs, by name.
     pub structs: HashMap<String, Layout>,
+    /// Struct names the annotations use, and where: checked once structs
+    /// from C are known too.
+    uses: Vec<(Range<usize>, String)>,
 }
 
 /// The register id of a name as an annotation writes it: `x0`, `w0`, `d0`.
@@ -348,14 +354,22 @@ pub fn annotations(analysis: &Analysis) -> Annotations {
             }
         }
     }
-    for (range, ty) in uses {
-        if let Some(name) = ty.struct_name()
-            && !out.structs.contains_key(name)
-        {
-            out.errors.push((range, unknown_type(name)));
-        }
-    }
+    out.uses = uses
+        .into_iter()
+        .filter_map(|(range, ty)| Some((range, ty.struct_name()?.to_string())))
+        .collect();
     out
+}
+
+impl Annotations {
+    /// Struct names used but declared nowhere, here or in the project's C.
+    fn unknown_structs(&self) -> Vec<(Range<usize>, String)> {
+        self.uses
+            .iter()
+            .filter(|(_, name)| !self.structs.contains_key(name))
+            .map(|(range, name)| (range.clone(), unknown_type(name)))
+            .collect()
+    }
 }
 
 /// Splits at commas outside `< >`.
@@ -1472,7 +1486,7 @@ fn finding(rule: &'static str, range: Range<usize>, message: String) -> Finding 
 pub(crate) fn run(
     analysis: &Analysis,
     cfg: &Cfg,
-    externals: &HashMap<String, Signature>,
+    externals: &crate::CDefinitions,
     out: &mut Vec<Finding>,
 ) {
     let mut annotations = annotations(analysis);
@@ -1483,14 +1497,27 @@ pub(crate) fn run(
             format!("this type annotation can't be read: {error}"),
         ));
     }
-    layout_constants(analysis, &annotations, out);
     // Calls to C functions are checked even without annotations; what the
     // file says wins.
-    for (name, signature) in externals {
+    for (name, signature) in &externals.signatures {
         annotations
             .signatures
             .entry(name.clone())
             .or_insert_with(|| signature.clone());
+    }
+    for (name, layout) in &externals.structs {
+        annotations
+            .structs
+            .entry(name.clone())
+            .or_insert_with(|| layout.clone());
+    }
+    layout_constants(analysis, &annotations, out);
+    for (range, error) in annotations.unknown_structs() {
+        out.push(finding(
+            "types/annotation",
+            range,
+            format!("this type annotation can't be read: {error}"),
+        ));
     }
     let checker = Checker::new(analysis, cfg, &annotations);
     for function in &cfg.functions {

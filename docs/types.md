@@ -67,6 +67,8 @@ The layout is C's: each field at the next multiple of its alignment (a scalar's 
 
 Through a `ptr<node>`, loads and stores must land on a field and match its width; offsets past the first node count as the next ones. `add x1, x0, #8` gives a `ptr<ptr<node>>`, a pointer to the `next` field, and `add x1, x0, #32` a `ptr<node>` to the next node.
 
+Structs defined in the project's C headers and sources count too, so a struct shared with C needs no annotation: `typedef struct node { ... } node_t;` makes `node` and `node_t` types, and a prototype's `node_t *` a `ptr<node>` ([0042](decisions/0042-c-structs.md)). Unions, bit-fields, and nested definitions are skipped.
+
 Name constants for offsets as `struct_field`, and they're checked against the layout:
 
 ```asm

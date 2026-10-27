@@ -110,6 +110,7 @@ Done when the first rules in the design run in `armls` and `armtool lint`, each 
 - [x] Gradual types from comment annotations: calls, signedness, memory access, pointer width ([0039](decisions/0039-types.md), [types.md](types.md))
 - [x] Types from C prototypes and the C library, and printf format strings ([0040](decisions/0040-c-signatures.md))
 - [x] Struct layouts and field offsets ([0041](decisions/0041-structs.md))
+- [x] Struct definitions from C headers ([0042](decisions/0042-c-structs.md))
 - [x] Values lost across calls: scratch and argument registers after a call, and callee-saved registers not restored on every path
 - [ ] Register liveness: dead stores
 - [ ] Darwin syscall argument checks by syscall number
