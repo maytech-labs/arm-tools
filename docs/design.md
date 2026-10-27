@@ -81,7 +81,7 @@ Apple-specific facts live here too: x18 is reserved, x29 is the frame pointer, a
 
 ## Sema
 
-**Status:** Per-file model done (2026-10-26): symbols, references, block structure, and clang's semantic errors ([0015](decisions/0015-sema-file-model.md)). Includes done ([0019](decisions/0019-includes.md)). Conditional assembly done ([0023](decisions/0023-conditional-assembly.md)). Macro expansion not started.
+**Status:** Per-file model done (2026-10-26): symbols, references, block structure, and clang's semantic errors ([0015](decisions/0015-sema-file-model.md)). Includes done ([0019](decisions/0019-includes.md)). Conditional assembly done ([0023](decisions/0023-conditional-assembly.md)). Macro and repeat expansion done ([0024](decisions/0024-macro-expansion.md)).
 
 Built from the tree for one file plus what it includes:
 

@@ -4,6 +4,7 @@
 mod analysis;
 mod diagnostic;
 mod line_index;
+mod macros;
 mod operands;
 mod resolver;
 mod suggest;

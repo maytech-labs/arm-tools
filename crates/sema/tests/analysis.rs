@@ -264,9 +264,62 @@ fn unknown_instruction_after_include_is_a_warning() {
 }
 
 #[test]
-fn macro_and_repeat_bodies_are_not_checked() {
-    let text = ".macro m op\n\\op x0, x1\nfrob\n_x: nop\n.endm\n.rept 2\nfrob\n.endr\n";
+fn macro_bodies_are_checked_only_when_called() {
+    // Clang checks a macro's lines when it expands them, not at the definition.
+    let text = ".macro m op\n\\op x0, x1\nfrob\n_x: nop\n.endm\n";
     assert_eq!(Analysis::new(text).diagnostics(), []);
+}
+
+#[test]
+fn expansions_are_checked_at_the_call() {
+    let codes = |text: &str| -> Vec<(&'static str, String)> {
+        let analysis = Analysis::new(text);
+        analysis
+            .diagnostics()
+            .iter()
+            .map(|d| (d.code, text[d.range.clone()].to_string()))
+            .collect()
+    };
+    let call = ".macro m r\nadd \\r, \\r, #5000\n.endm\nm x0\n";
+    assert_eq!(codes(call), [("invalid-operand", "m x0".to_string())]);
+    let good = ".macro m r\nadd \\r, \\r, #1\n.endm\nm x0\n";
+    assert!(codes(good).is_empty());
+    let rept = ".rept 2\nfrob\n.endr\n";
+    assert_eq!(codes(rept)[0].0, "unknown-instruction");
+    let irp = ".irp r, x0, x1\nadd \\r, \\r, #5000\n.endr\n";
+    assert_eq!(
+        codes(irp).len(),
+        1,
+        "one error, not one per value: {:?}",
+        codes(irp)
+    );
+    let analysis = Analysis::new(call);
+    let message = &analysis.diagnostics()[0].message;
+    assert!(message.ends_with("(in the expansion of 'm')"), "{message}");
+}
+
+#[test]
+fn macro_arguments_are_bound_like_clang() {
+    let codes = |text: &str| -> Vec<&'static str> {
+        Analysis::new(text)
+            .diagnostics()
+            .iter()
+            .map(|d| d.code)
+            .collect()
+    };
+    // Brackets don't group arguments: this is three, for two parameters.
+    assert_eq!(
+        codes(".macro m a, b\nldr \\a, \\b\n.endm\nm x0, [x1, #8]\n"),
+        ["macro-arguments"]
+    );
+    assert_eq!(
+        codes(".macro m a:req\n.quad \\a\n.endm\nm\n"),
+        ["macro-arguments"]
+    );
+    assert!(codes(".macro m a=1, b=2\n.quad \\a, \\b\n.endm\nm b=5\n").is_empty());
+    assert!(codes(".macro m a, b:vararg\n.quad \\a, \\b\n.endm\nm 1, 2, 3\n").is_empty());
+    assert!(codes(".macro m\nl\\@: nop\n.endm\nm\nm\n").is_empty());
+    assert!(codes(".macro m\nnop\n.exitm\nfrob\n.endm\nm\n").is_empty());
 }
 
 #[test]

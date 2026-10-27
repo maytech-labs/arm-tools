@@ -35,5 +35,6 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Folding ranges in armls: macro, repeat, and conditional blocks, label sections, and comment runs.
 - CPU feature checks: "instruction requires: cssc" and friends, following clang's default target (apple-m1), `.arch`, `.cpu`, `.arch_extension`, and `[target]` in armtool.toml. Feature data generated from LLVM.
 - Conditional assembly: `.if` and its relatives are evaluated as clang would; skipped branches aren't checked and are greyed out in the editor.
-- Design doc, roadmap, and ADRs 0001 to 0023.
+- Macro calls, `.rept`, `.irp`, and `.irpc` are expanded and checked, with clang's argument rules; problems are reported at the call.
+- Design doc, roadmap, and ADRs 0001 to 0024.
 - `cargo xtask check` and CI on macOS and Linux.

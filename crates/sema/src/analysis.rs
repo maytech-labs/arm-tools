@@ -12,6 +12,7 @@ use arm_syntax::ast::{self, Statement};
 use arm_syntax::{NodeOrToken, Parse, SyntaxKind, SyntaxNode, SyntaxToken};
 
 use crate::diagnostic::{Diagnostic, Severity};
+use crate::macros::{self, MacroDef};
 use crate::operands::{self, Scope, Value};
 use crate::suggest::suggest;
 
@@ -116,6 +117,8 @@ pub struct Analysis {
     diagnostics: Vec<Diagnostic>,
     items: Vec<Item>,
     inactive: Vec<Range<usize>>,
+    /// Macro definitions, for files that include this one.
+    macro_defs: HashMap<String, MacroDef>,
     /// Constants with known values at the end of the file, for files that
     /// include this one.
     constants: HashMap<String, i64>,
@@ -151,7 +154,7 @@ impl Analysis {
         resolver: Option<&dyn Resolver>,
         features: Option<FeatureSet>,
     ) -> Analysis {
-        Analysis::build(text, resolver, path.into_iter().collect(), features)
+        Analysis::build(text, resolver, path.into_iter().collect(), features, None)
     }
 
     fn build(
@@ -159,15 +162,21 @@ impl Analysis {
         resolver: Option<&dyn Resolver>,
         stack: Vec<PathBuf>,
         features: Option<FeatureSet>,
+        seed: Option<Seed>,
     ) -> Analysis {
         let parse = arm_syntax::parse(text);
+        let seed = seed.unwrap_or_default();
         let mut builder = Builder {
+            text,
+            macro_defs: seed.macro_defs,
+            depth: seed.depth,
+            counter: 0,
             resolver,
             inactive: Vec::new(),
             undecided: Vec::new(),
             stack,
             features,
-            symbols: Vec::new(),
+            symbols: seed.symbols,
             items: Vec::new(),
             pending: Vec::new(),
             local_refs: Vec::new(),
@@ -176,8 +185,8 @@ impl Analysis {
             has_include: false,
             exported: Vec::new(),
             skip_local_refs: false,
-            constants: HashMap::new(),
-            aliases: HashMap::new(),
+            constants: seed.constants,
+            aliases: seed.aliases,
             later_macros: macro_names(&parse),
         };
         for error in parse.errors() {
@@ -213,6 +222,7 @@ impl Analysis {
             diagnostics,
             items: builder.items,
             inactive: builder.inactive,
+            macro_defs: builder.macro_defs,
             constants: builder.constants,
             aliases: builder.aliases,
         }
@@ -311,8 +321,12 @@ struct Block {
     branch: Option<bool>,
     /// For conditionals: whether an earlier branch was taken.
     taken: Option<bool>,
-    /// Where the current branch's lines start.
+    /// Where the current branch's lines start; for macros and repeats,
+    /// where the body starts.
     branch_start: usize,
+    /// The text after the opening directive: `name a, b=1` for `.macro`,
+    /// `r, x0, x1` for `.irp`.
+    spec: String,
 }
 
 /// A name reference waiting for every definition to be known.
@@ -323,7 +337,27 @@ struct Pending {
     macro_only: bool,
 }
 
+/// What an expansion starts with: the context at the call.
+#[derive(Default)]
+struct Seed {
+    symbols: Vec<Symbol>,
+    constants: HashMap<String, i64>,
+    aliases: HashMap<String, String>,
+    macro_defs: HashMap<String, MacroDef>,
+    depth: usize,
+}
+
+/// How deep macro expansions may nest before we stop following them.
+const MAX_EXPANSION_DEPTH: usize = 8;
+
 struct Builder<'r> {
+    text: &'r str,
+    /// Macros defined so far, with their bodies.
+    macro_defs: HashMap<String, MacroDef>,
+    /// How many expansions deep this analysis is.
+    depth: usize,
+    /// For `\@`: one more for each expansion.
+    counter: usize,
     resolver: Option<&'r dyn Resolver>,
     /// Lines in branches clang skips.
     inactive: Vec<Range<usize>>,
@@ -437,6 +471,9 @@ impl Builder<'_> {
                         range: range(&name),
                         macro_only: true,
                     });
+                    if !in_body {
+                        self.expand_call(name.text(), call.syntax(), &name);
+                    }
                 }
                 self.collect_refs(call.syntax());
             }
@@ -457,6 +494,9 @@ impl Builder<'_> {
                         range: range(&name),
                         macro_only: true,
                     });
+                    if !in_body {
+                        self.expand_call(name.text(), insn.syntax(), &name);
+                    }
                     self.collect_refs(insn.syntax());
                     return;
                 }
@@ -547,15 +587,23 @@ impl Builder<'_> {
                     });
                 }
                 self.open(BlockKind::Macro, &name, &name_token);
+                self.set_spec(directive);
                 return;
             }
             ".rept" | ".rep" | ".irp" | ".irpc" => {
                 self.collect_refs(directive.syntax());
                 self.open(BlockKind::Repeat, &name, &name_token);
+                self.set_spec(directive);
                 return;
             }
-            ".endm" | ".endmacro" => return self.close(BlockKind::Macro, &name, &name_token),
-            ".endr" => return self.close(BlockKind::Repeat, &name, &name_token),
+            ".endm" | ".endmacro" => {
+                self.end_macro(node_range(directive.syntax()).start);
+                return self.close(BlockKind::Macro, &name, &name_token);
+            }
+            ".endr" => {
+                self.end_repeat(node_range(directive.syntax()).start);
+                return self.close(BlockKind::Repeat, &name, &name_token);
+            }
             ".endif" => {
                 if self.blocks.last().map(|b| b.kind) == Some(BlockKind::Conditional) {
                     self.end_branch(node_range(directive.syntax()).start);
@@ -763,7 +811,7 @@ impl Builder<'_> {
         }
         let mut stack = self.stack.clone();
         stack.push(path.clone());
-        let included = Analysis::build(&text, self.resolver, stack, self.features.clone());
+        let included = Analysis::build(&text, self.resolver, stack, self.features.clone(), None);
         let origin = Arc::new(Origin { path, text });
         for symbol in included.symbols {
             let importable = match symbol.kind {
@@ -777,6 +825,7 @@ impl Builder<'_> {
             }
         }
         self.constants.extend(included.constants);
+        self.macro_defs.extend(included.macro_defs);
         self.aliases.extend(included.aliases);
     }
 
@@ -1009,7 +1058,170 @@ impl Builder<'_> {
             branch: Some(true),
             taken: Some(true),
             branch_start: range(token).end,
+            spec: String::new(),
         });
+    }
+
+    /// Records the text after a block's opening directive, and where its
+    /// body starts.
+    fn set_spec(&mut self, directive: &ast::Directive) {
+        let whole = node_range(directive.syntax());
+        let spec = directive
+            .syntax()
+            .text()
+            .to_string()
+            .split_once(char::is_whitespace)
+            .map(|(_, rest)| strip_comment(rest).trim().to_string())
+            .unwrap_or_default();
+        if let Some(block) = self.blocks.last_mut() {
+            block.spec = spec;
+            block.branch_start = whole.end;
+        }
+    }
+
+    /// Whether only one macro or repeat body is open: the one on top.
+    fn outermost_body(&self) -> bool {
+        self.blocks
+            .iter()
+            .filter(|b| b.kind != BlockKind::Conditional)
+            .count()
+            == 1
+    }
+
+    /// Analyzes expanded text as ordinary code, in the context here, and
+    /// reports its problems at `at`, where the call or repeat is.
+    fn check_expansion(&mut self, at: Range<usize>, what: &str, text: &str) {
+        if self.depth >= MAX_EXPANSION_DEPTH {
+            return;
+        }
+        let seed = Seed {
+            symbols: self
+                .symbols
+                .iter()
+                .filter(|s| matches!(s.kind, SymbolKind::Macro | SymbolKind::Constant))
+                .cloned()
+                .collect(),
+            constants: self.constants.clone(),
+            aliases: self.aliases.clone(),
+            macro_defs: self.macro_defs.clone(),
+            depth: self.depth + 1,
+        };
+        let expanded = Analysis::build(text, None, Vec::new(), self.features.clone(), Some(seed));
+        for d in expanded.diagnostics {
+            let diagnostic = Diagnostic {
+                range: at.clone(),
+                severity: d.severity,
+                code: d.code,
+                message: format!("{} (in the expansion of {what})", d.message),
+                fix: None,
+            };
+            // The same problem from each value of an .irp is reported once.
+            if d.severity != Severity::Hint && !self.diagnostics.contains(&diagnostic) {
+                self.diagnostics.push(diagnostic);
+            }
+        }
+    }
+
+    /// At `.endm`: records the macro's definition, if this is a top-level
+    /// macro (one inside another is defined only when the outer expands).
+    fn end_macro(&mut self, end: usize) {
+        let Some(block) = self.blocks.last() else {
+            return;
+        };
+        if block.kind != BlockKind::Macro || !self.outermost_body() {
+            return;
+        }
+        let spec = block.spec.clone();
+        let body = self
+            .text
+            .get(block.branch_start..end)
+            .unwrap_or_default()
+            .to_string();
+        let (name, params) = spec
+            .split_once(|c: char| c == ',' || c.is_whitespace())
+            .unwrap_or((spec.as_str(), ""));
+        if !name.is_empty() {
+            let def = MacroDef {
+                params: macros::parse_params(params),
+                body,
+            };
+            self.macro_defs.insert(name.to_string(), def);
+        }
+    }
+
+    /// At `.endr`: checks the repeated lines as clang expands them, once for
+    /// `.rept`, once per value for `.irp` and per character for `.irpc`.
+    fn end_repeat(&mut self, end: usize) {
+        let Some(block) = self.blocks.last() else {
+            return;
+        };
+        if block.kind != BlockKind::Repeat || !self.outermost_body() {
+            return;
+        }
+        // An enclosing branch we skip or can't decide: nothing to check.
+        let outer_active = self
+            .blocks
+            .iter()
+            .filter(|b| b.kind == BlockKind::Conditional)
+            .all(|b| b.branch == Some(true));
+        if !outer_active {
+            return;
+        }
+        let at = block.range.start..end;
+        let body = self
+            .text
+            .get(block.branch_start..end)
+            .unwrap_or_default()
+            .to_string();
+        let spec = block.spec.clone();
+        let kind = block.directive.clone();
+        let expansions: Vec<String> = match kind.as_str() {
+            ".rept" | ".rep" => vec![body],
+            ".irp" | ".irpc" => {
+                let (symbol, values) = spec.split_once(',').unwrap_or((spec.as_str(), ""));
+                let symbol = symbol.trim().to_string();
+                let values: Vec<String> = if kind == ".irp" {
+                    macros::split_args(values)
+                } else {
+                    values.trim().chars().map(String::from).collect()
+                };
+                let values = if values.is_empty() {
+                    vec![String::new()]
+                } else {
+                    values
+                };
+                values
+                    .into_iter()
+                    .map(|v| macros::substitute(&body, &[(symbol.clone(), v)], 0))
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        for text in expansions {
+            self.check_expansion(at.clone(), &kind, &text);
+        }
+    }
+
+    /// Binds a call's arguments and checks the expansion.
+    fn expand_call(&mut self, name: &str, call: &SyntaxNode, name_token: &SyntaxToken) {
+        let Some(def) = self.macro_defs.get(name).cloned() else {
+            return;
+        };
+        let call_range = node_range(call);
+        let args_text =
+            strip_comment(&self.text[range(name_token).end..call_range.end]).to_string();
+        let args = macros::split_args(&args_text);
+        match macros::bind(name, &def, &args) {
+            Ok(values) => {
+                self.counter += 1;
+                let text = macros::substitute(&def.body, &values, self.counter);
+                self.check_expansion(call_range, &format!("'{name}'"), &text);
+            }
+            Err(message) => {
+                self.diagnostics
+                    .push(Diagnostic::error(call_range, "macro-arguments", message))
+            }
+        }
     }
 
     /// Whether clang assembles the current line: false inside a branch whose
@@ -1266,4 +1478,19 @@ fn range(token: &SyntaxToken) -> Range<usize> {
 fn node_range(node: &SyntaxNode) -> Range<usize> {
     let r = node.text_range();
     usize::from(r.start())..usize::from(r.end())
+}
+
+/// Text before a trailing `;` or `//` comment, outside strings.
+fn strip_comment(text: &str) -> &str {
+    let mut in_string = false;
+    let bytes = text.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'"' => in_string = !in_string,
+            b';' if !in_string => return &text[..i],
+            b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => return &text[..i],
+            _ => {}
+        }
+    }
+    text
 }

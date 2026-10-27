@@ -278,7 +278,15 @@ impl Parser<'_> {
         self.start(ArgList);
         while !self.at_end() {
             let before = self.pos;
-            if starts_expr(self.current()) {
+            // A colon or percent starts an expression only as a specifier
+            // (`:lo12:x`, `%pltpcrel(x)`); otherwise it's text, like the
+            // `:req` in `.macro m a:req`.
+            let specifier = match self.current() {
+                Colon => self.nth(1) == Ident && self.nth(2) == Colon,
+                Percent => self.nth(1) == Ident && self.nth(2) == LParen,
+                _ => true,
+            };
+            if starts_expr(self.current()) && specifier {
                 self.expr();
             }
             if self.pos == before {
@@ -936,6 +944,11 @@ mod tests {
             shape("ldrb w3, [x2, \"+[T m].v\"@PAGEOFF]"),
             "Instruction(OperandList(NameRef()Memory(NameRef()NameRef(Variant()))))"
         );
+    }
+
+    #[test]
+    fn macro_parameter_qualifiers_parse() {
+        assert!(errors(".macro m a:req, b:vararg").is_empty());
     }
 
     #[test]
