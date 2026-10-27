@@ -1,6 +1,8 @@
 //! `armls`, the language server for Apple AArch64 assembly. It speaks LSP
 //! over stdin and stdout; editors start it. See docs/design.md#language-server.
 
+#[cfg(test)]
+mod fuzz;
 mod ide;
 mod server;
 mod workspace;
