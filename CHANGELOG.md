@@ -44,7 +44,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Inlay hints in armls: constant values where they're used, and the syscall a `mov x16, #n` sets up.
 - `.S` files go through clang's C preprocessor for diagnostics, mapped back to the lines you wrote.
 - A Homebrew formula (`brew install --HEAD arm-tools` from this repo's tap) and a VS Code extension in `editors/vscode`.
-- Design doc, roadmap, and ADRs 0001 to 0040.
+- Design doc, roadmap, and ADRs 0001 to 0041.
 - `cargo xtask check` and CI on macOS and Linux.
 - `armls` signature help: the forms an instruction's operands so far could begin, with the operand at the cursor.
 - `armls` completion offers what fits the operand: registers of the right width, condition codes, barriers, prefetch operations, shifts and extends, labels (with `@PAGE` and `@PAGEOFF`, and global labels from other files), and constants. Mnemonics show a signature.
@@ -71,3 +71,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Lint: `flow/flags-clobbered` finds condition-flag reads (`b.eq`, `csel`, `adc`) after a call that may have changed the flags.
 - Types for assembly: `armtool:` comments declare signatures and register types, and five `types/` rules check calls, signedness, memory access, and pointer width. Hover shows a register's type. See docs/types.md.
 - Types from C: calls are checked against the project's C prototypes and common C library functions, and printf-family calls against their format strings (`types/format`), including Darwin's stack-passed variadic arguments.
+- Structs in types: `armtool: struct name { ... }` with C's layout; loads, stores, and pointer arithmetic through a struct pointer are checked against its fields, and `types/layout` checks `struct_field` offset constants.

@@ -209,6 +209,14 @@ fmt: .asciz "%ld\n"
 
 Default level: warning.
 
+### `types/layout`
+
+A field-offset constant that disagrees with the struct's layout
+
+With `; armtool: struct point { x: i32, y: i32 }`, constants named point_x, point_y, and point_size are checked against the layout C would give the struct: fields at the next multiple of their alignment, the size rounded up to the largest alignment. A stale offset reads the wrong field. See docs/types.md.
+
+Default level: warning.
+
 ### `types/pointer-width`
 
 A pointer read through a 32-bit W register

@@ -49,3 +49,4 @@
 - [0038 AArch64 Linux as a second platform](decisions/0038-linux.md)
 - [0039 Gradual types from comment annotations](decisions/0039-types.md)
 - [0040 Signatures from C, and printf format strings](decisions/0040-c-signatures.md)
+- [0041 Struct layouts in type annotations](decisions/0041-structs.md)

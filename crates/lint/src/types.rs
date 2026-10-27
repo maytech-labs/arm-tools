@@ -34,6 +34,8 @@ pub enum Ty {
     },
     /// A pointer, to a known type or to anything (`ptr`).
     Ptr(Option<Box<Ty>>),
+    /// A struct declared with `armtool: struct name { ... }`.
+    Struct(String),
 }
 
 impl Ty {
@@ -62,17 +64,44 @@ impl Ty {
                 bits: b,
             }),
             ("f", Some(b @ (32 | 64))) => Ok(Ty::Float { bits: b }),
-            _ => Err(format!(
-                "unknown type '{text}': use i8 to i64, u8 to u64, f32, f64, ptr, or ptr<T>"
-            )),
+            // `i33` isn't a struct name, it's a mistake.
+            ("i" | "u" | "f", Some(_)) => Err(unknown_type(text)),
+            _ if !text.is_empty()
+                && !text.starts_with(|c: char| c.is_ascii_digit())
+                && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+            {
+                Ok(Ty::Struct(text.to_string()))
+            }
+            _ => Err(unknown_type(text)),
         }
     }
 
-    /// Size in bytes.
+    /// Size in bytes; 0 for a struct, whose size is its [`Layout`]'s.
     pub fn size(&self) -> u8 {
         match self {
             Ty::Int { bits, .. } | Ty::Float { bits } => bits / 8,
             Ty::Ptr(_) => 8,
+            Ty::Struct(_) => 0,
+        }
+    }
+
+    /// The struct a pointer points to, if it's a pointer to a struct.
+    fn struct_pointee(&self) -> Option<&str> {
+        match self {
+            Ty::Ptr(Some(t)) => match &**t {
+                Ty::Struct(name) => Some(name),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A struct this type names, directly or through pointers.
+    fn struct_name(&self) -> Option<&str> {
+        match self {
+            Ty::Struct(name) => Some(name),
+            Ty::Ptr(Some(t)) => t.struct_name(),
+            _ => None,
         }
     }
 
@@ -110,8 +139,106 @@ impl std::fmt::Display for Ty {
             Ty::Float { bits } => write!(f, "f{bits}"),
             Ty::Ptr(None) => write!(f, "ptr"),
             Ty::Ptr(Some(t)) => write!(f, "ptr<{t}>"),
+            Ty::Struct(name) => write!(f, "{name}"),
         }
     }
+}
+
+fn unknown_type(text: &str) -> String {
+    format!(
+        "unknown type '{text}': use i8 to i64, u8 to u64, f32, f64, ptr, ptr<T>, or a struct declared with armtool: struct"
+    )
+}
+
+/// A struct's layout, by C's rules: each field at the next multiple of its
+/// alignment, the size rounded up to the largest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layout {
+    pub size: u64,
+    pub align: u64,
+    /// Name, offset, element type, and element count (1 unless an array).
+    pub fields: Vec<(String, u64, Ty, u64)>,
+}
+
+/// Size and alignment of a type, given the structs declared so far.
+fn size_align(ty: &Ty, structs: &HashMap<String, Layout>) -> Option<(u64, u64)> {
+    match ty {
+        Ty::Struct(name) => structs.get(name).map(|l| (l.size, l.align)),
+        other => {
+            let size = u64::from(other.size());
+            Some((size, size))
+        }
+    }
+}
+
+/// `point { x: i32, y: i32, tag: u8[4] }`.
+fn parse_struct(text: &str, structs: &HashMap<String, Layout>) -> Result<(String, Layout), String> {
+    let open = text
+        .find('{')
+        .ok_or("write struct name { field: T, ... }")?;
+    let close = text.rfind('}').ok_or("the field list needs a closing }")?;
+    let name = text[..open].trim().to_string();
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("write struct name { field: T, ... }".into());
+    }
+    let mut fields = Vec::new();
+    let (mut offset, mut align) = (0u64, 1u64);
+    for part in split_top(&text[open + 1..close]) {
+        let (field, ty) = part
+            .split_once(':')
+            .ok_or_else(|| format!("'{part}': write field: type"))?;
+        let ty = ty.trim();
+        let (ty, count) = match ty.strip_suffix(']').and_then(|t| t.rsplit_once('[')) {
+            Some((element, n)) => (
+                element.trim(),
+                n.trim()
+                    .parse::<u64>()
+                    .map_err(|_| format!("'{ty}': write an array as T[N]"))?,
+            ),
+            None => (ty, 1),
+        };
+        let ty = Ty::parse(ty)?;
+        let (size, field_align) = size_align(&ty, structs)
+            .ok_or_else(|| format!("unknown type '{ty}': declare struct {ty} before {name}"))?;
+        offset = offset.div_ceil(field_align) * field_align;
+        fields.push((field.trim().to_string(), offset, ty, count));
+        offset += size * count;
+        align = align.max(field_align);
+    }
+    let size = offset.div_ceil(align) * align;
+    Ok((
+        name,
+        Layout {
+            size,
+            align,
+            fields,
+        },
+    ))
+}
+
+/// The scalar field at an offset into a struct: its path (`pos.x`) and type.
+fn field_at(structs: &HashMap<String, Layout>, name: &str, offset: u64) -> Option<(String, Ty)> {
+    let layout = structs.get(name)?;
+    for (field, start, ty, count) in &layout.fields {
+        let (size, _) = size_align(ty, structs)?;
+        if offset < *start || offset >= start + size * count {
+            continue;
+        }
+        let within = (offset - start) % size;
+        let index = (offset - start) / size;
+        let path = if *count > 1 {
+            format!("{field}[{index}]")
+        } else {
+            field.clone()
+        };
+        return match ty {
+            Ty::Struct(inner) => {
+                field_at(structs, inner, within).map(|(rest, ty)| (format!("{path}.{rest}"), ty))
+            }
+            _ => (within == 0).then(|| (path, ty.clone())),
+        };
+    }
+    None
 }
 
 /// A function's signature: the registers it takes, and what it returns.
@@ -135,6 +262,8 @@ pub struct Annotations {
     pub registers: Vec<(usize, String, Ty)>,
     /// Malformed annotations: where, and what's wrong.
     pub errors: Vec<(Range<usize>, String)>,
+    /// Structs, by name.
+    pub structs: HashMap<String, Layout>,
 }
 
 /// The register id of a name as an annotation writes it: `x0`, `w0`, `d0`.
@@ -150,6 +279,8 @@ fn annotated_register(name: &str) -> Option<String> {
 /// Reads every `armtool: fn ...` and `armtool: x0: T` comment.
 pub fn annotations(analysis: &Analysis) -> Annotations {
     let mut out = Annotations::default();
+    // Types that name structs, checked once every struct is known.
+    let mut uses: Vec<(Range<usize>, Ty)> = Vec::new();
     for element in analysis.parse().syntax().descendants_with_tokens() {
         let Some(token) = element.into_token() else {
             continue;
@@ -164,9 +295,26 @@ pub fn annotations(analysis: &Analysis) -> Annotations {
         let start = usize::from(token.text_range().start());
         let body = text[at + "armtool:".len()..].trim();
         let range = start + at..start + text.trim_end().len();
+        if let Some(declaration) = body.strip_prefix("struct ") {
+            match parse_struct(declaration, &out.structs) {
+                Ok((name, layout)) => {
+                    out.structs.insert(name, layout);
+                }
+                Err(error) => out.errors.push((range, error)),
+            }
+            continue;
+        }
         if let Some(signature) = body.strip_prefix("fn ") {
             match parse_signature(signature) {
                 Ok(signature) => {
+                    for ty in signature
+                        .params
+                        .iter()
+                        .map(|(_, t)| t)
+                        .chain(&signature.ret)
+                    {
+                        uses.push((range.clone(), ty.clone()));
+                    }
                     out.signatures.insert(signature.name.clone(), signature);
                 }
                 Err(error) => out.errors.push((range, error)),
@@ -188,13 +336,23 @@ pub fn annotations(analysis: &Analysis) -> Annotations {
                 continue;
             };
             match (annotated_register(register), Ty::parse(ty)) {
-                (Some(id), Ok(ty)) => out.registers.push((start, id, ty)),
+                (Some(id), Ok(ty)) => {
+                    uses.push((range.clone(), ty.clone()));
+                    out.registers.push((start, id, ty));
+                }
                 (None, _) => out.errors.push((
                     range.clone(),
                     format!("'{}' isn't a register", register.trim()),
                 )),
                 (_, Err(error)) => out.errors.push((range.clone(), error)),
             }
+        }
+    }
+    for (range, ty) in uses {
+        if let Some(name) = ty.struct_name()
+            && !out.structs.contains_key(name)
+        {
+            out.errors.push((range, unknown_type(name)));
         }
     }
     out
@@ -490,7 +648,26 @@ impl Checker<'_> {
             "add" | "sub" => {
                 let lhs = ops.get(1).and_then(|o| operand_type(&state.types, o));
                 let rhs = ops.get(2).and_then(|o| operand_type(&state.types, o));
+                let constant = match ops.get(2) {
+                    Some(Operand::Imm(Imm::Constant(n))) => {
+                        Some(if head == "sub" { -n } else { *n })
+                    }
+                    _ => None,
+                };
                 let ty = match (lhs, rhs) {
+                    // Into a struct: whole structs, or a pointer to a field.
+                    (Some(p), None) if p.struct_pointee().is_some() => {
+                        let name = p.struct_pointee().unwrap_or_default();
+                        match (constant, self.annotations.structs.get(name)) {
+                            (Some(n), Some(layout)) if n % layout.size as i64 == 0 => {
+                                Some(p.clone())
+                            }
+                            (Some(n), Some(_)) => {
+                                self.field(name, n).map(|(_, t)| Ty::Ptr(Some(Box::new(t))))
+                            }
+                            _ => None,
+                        }
+                    }
                     (Some(p @ Ty::Ptr(_)), None | Some(Ty::Int { .. })) => Some(p),
                     (Some(Ty::Int { .. }) | None, Some(p @ Ty::Ptr(_))) if head == "add" => Some(p),
                     (Some(Ty::Ptr(_)), Some(Ty::Ptr(_))) if head == "sub" => Some(Ty::Int {
@@ -561,6 +738,13 @@ impl Checker<'_> {
                     .and_then(|b| state.types.get(b))
                     .and_then(Ty::pointee)
                     .cloned();
+                // Through a struct pointer, the field at the offset.
+                let pointee = match pointee {
+                    Some(Ty::Struct(name)) => self
+                        .field(&name, memory_offset(ops).unwrap_or(0))
+                        .map(|(_, t)| t),
+                    other => other,
+                };
                 if let Some(pointee) = pointee {
                     let ty = loaded(insn, &pointee);
                     let pair = matches!(head, "ldp" | "ldnp" | "ldpsw");
@@ -699,6 +883,45 @@ impl Checker<'_> {
                 Some(Operand::Register(r)) if matches!(r.register.llvm_name().as_bytes().first(), Some(b'Q' | b'D' | b'S' | b'H' | b'B'))
             );
             match state.types.get(&base) {
+                Some(pointer) if pointer.struct_pointee().is_some() => {
+                    let name = pointer.struct_pointee().unwrap_or_default();
+                    if self.annotations.structs.contains_key(name) {
+                        let offset = memory_offset(ops).unwrap_or(0);
+                        let pair = matches!(head, "ldp" | "stp" | "ldnp" | "stnp" | "ldpsw");
+                        for n in 0..if pair { 2 } else { 1 } {
+                            let at_offset = offset + n * i64::from(size);
+                            match self.field(name, at_offset) {
+                                None => {
+                                    out.push(finding(
+                                        "types/memory",
+                                        insn.range.clone(),
+                                        format!(
+                                            "offset {at_offset} into {name} isn't at a field ({})",
+                                            self.fields(name)
+                                        ),
+                                    ));
+                                    break;
+                                }
+                                Some((path, ty)) if ty.size() != size && !vector => {
+                                    out.push(finding(
+                                        "types/memory",
+                                        insn.range.clone(),
+                                        format!(
+                                            "{name}.{path} is {ty} ({} bytes), but this {} {size}",
+                                            ty.size(),
+                                            if head.starts_with("ld") {
+                                                "loads"
+                                            } else {
+                                                "stores"
+                                            }
+                                        ),
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 Some(Ty::Ptr(Some(pointee))) => {
                     let whole = vector && size % pointee.size() == 0;
                     if pointee.size() != size && !whole {
@@ -742,12 +965,38 @@ impl Checker<'_> {
                 _ => {}
             }
         }
+        // Into a struct: whole elements, or the start of a field.
+        if matches!(head, "add" | "sub")
+            && let (Some(Ty::Ptr(Some(pointee))), Some(Operand::Imm(Imm::Constant(n)))) = (
+                ops.get(1).and_then(|o| operand_type(&state.types, o)),
+                ops.get(2),
+            )
+            && let Ty::Struct(name) = &*pointee
+            && let Some(layout) = self.annotations.structs.get(name)
+            && layout.size > 0
+            && n % layout.size as i64 != 0
+            && self
+                .field(name, if head == "sub" { -n } else { *n })
+                .is_none()
+        {
+            out.push(finding(
+                "types/memory",
+                at(2),
+                format!(
+                    "{} points to {name}, so moving it by {n} bytes lands neither on a field ({}) nor a whole {name} ({} bytes)",
+                    register_name(&ops[1]),
+                    self.fields(name),
+                    layout.size
+                ),
+            ));
+        }
         // Pointer arithmetic by part of an element.
         if matches!(head, "add" | "sub")
             && let (Some(Ty::Ptr(Some(pointee))), Some(Operand::Imm(Imm::Constant(n)))) = (
                 ops.get(1).and_then(|o| operand_type(&state.types, o)),
                 ops.get(2),
             )
+            && pointee.size() > 0
             && n % i64::from(pointee.size()) != 0
         {
             out.push(finding(
@@ -1047,6 +1296,29 @@ impl Checker<'_> {
         self.states.borrow().get(&j).map(|s| s.types.clone())
     }
 
+    /// The scalar field of a struct at a byte offset, which may run past
+    /// the first element of an array of them.
+    fn field(&self, name: &str, offset: i64) -> Option<(String, Ty)> {
+        let layout = self.annotations.structs.get(name).filter(|l| l.size > 0)?;
+        let within = u64::try_from(offset.rem_euclid(layout.size as i64)).ok()?;
+        field_at(&self.annotations.structs, name, within)
+    }
+
+    /// A struct's fields, for messages: `x at 0, y at 4`.
+    fn fields(&self, name: &str) -> String {
+        self.annotations
+            .structs
+            .get(name)
+            .map(|l| {
+                l.fields
+                    .iter()
+                    .map(|(f, o, _, _)| format!("{f} at {o}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default()
+    }
+
     fn line(&self, offset: usize) -> u32 {
         self.analysis
             .line_index()
@@ -1211,6 +1483,7 @@ pub(crate) fn run(
             format!("this type annotation can't be read: {error}"),
         ));
     }
+    layout_constants(analysis, &annotations, out);
     // Calls to C functions are checked even without annotations; what the
     // file says wins.
     for (name, signature) in externals {
@@ -1231,6 +1504,43 @@ pub(crate) fn run(
         *checker.states.borrow_mut() = states.clone();
         for i in indices {
             checker.check(i, &states[&i], signature, out);
+        }
+    }
+}
+
+/// Constants named for a struct's fields and size (`point_y = 4`,
+/// `point_size = 8`) against its layout.
+fn layout_constants(analysis: &Analysis, annotations: &Annotations, out: &mut Vec<Finding>) {
+    for (name, layout) in &annotations.structs {
+        let expected = layout
+            .fields
+            .iter()
+            .map(|(field, offset, _, _)| {
+                (
+                    format!("{name}_{field}"),
+                    *offset,
+                    format!("{name}.{field} is at offset"),
+                )
+            })
+            .chain([(format!("{name}_size"), layout.size, format!("{name} is"))]);
+        for (constant, value, what) in expected {
+            let Some(symbol) = analysis.symbols().iter().find(|s| {
+                s.name == constant && s.kind == arm_sema::SymbolKind::Constant && s.origin.is_none()
+            }) else {
+                continue;
+            };
+            if let Some(actual) = analysis.constant_value(&constant)
+                && actual != value as i64
+            {
+                let unit = if what.ends_with(" is") { " bytes" } else { "" };
+                out.push(finding(
+                    "types/layout",
+                    symbol.range.clone(),
+                    format!(
+                        "{constant} is {actual}, but {what} {value}{unit}. Change it to {value}"
+                    ),
+                ));
+            }
         }
     }
 }
@@ -1689,6 +1999,132 @@ fmt:    .asciz \"%d %d\\n\"
             [Int, Float, Pointer, Int, Int, Int, Pointer, Int]
         );
         assert_eq!(conversions("100%%"), []);
+    }
+
+    #[test]
+    fn struct_layouts() {
+        let mut structs = HashMap::new();
+        let (name, point) = parse_struct("point { x: i32, y: i32 }", &structs).expect("parses");
+        assert_eq!((point.size, point.align), (8, 4));
+        structs.insert(name, point);
+        let (_, rec) = parse_struct(
+            "rec { tag: u8, pos: point, name: ptr<i8>, n: u16[3] }",
+            &structs,
+        )
+        .expect("parses");
+        let offsets: Vec<(&str, u64)> = rec
+            .fields
+            .iter()
+            .map(|(f, o, _, _)| (f.as_str(), *o))
+            .collect();
+        // u8 at 0, point aligned to 4, the pointer to 8, three u16 after it.
+        assert_eq!(offsets, [("tag", 0), ("pos", 4), ("name", 16), ("n", 24)]);
+        assert_eq!((rec.size, rec.align), (32, 8));
+        structs.insert("rec".into(), rec);
+        assert_eq!(
+            field_at(&structs, "rec", 8).map(|(p, _)| p).as_deref(),
+            Some("pos.y")
+        );
+        assert_eq!(
+            field_at(&structs, "rec", 28).map(|(p, _)| p).as_deref(),
+            Some("n[2]")
+        );
+        assert_eq!(field_at(&structs, "rec", 2), None);
+        assert!(parse_struct("bad { x: later }", &structs).is_err());
+    }
+
+    #[test]
+    fn struct_access() {
+        let text = "\
+; armtool: struct point { x: i32, y: i32 }
+; armtool: struct node { pos: point, next: ptr<node>, id: u64 }
+; armtool: fn _f(x0: ptr<node>) -> i64
+node_next = 8
+node_id = 12
+.globl _f
+_f:
+    ldr     w1, [x0, #4]
+    ldr     x2, [x0, #8]
+    ldr     x3, [x2, #16]
+    ldr     w4, [x0, #2]
+    ldr     x5, [x0, #4]
+    add     x6, x0, #8
+    ldr     x7, [x6]
+    add     x8, x0, #24
+    add     x9, x0, #5
+    ldr     x0, [x2, #8]
+    ret
+";
+        let found = types(text);
+        let rules: Vec<&str> = found.iter().map(|(r, _)| *r).collect();
+        assert_eq!(
+            rules,
+            [
+                "types/layout",
+                "types/memory",
+                "types/memory",
+                "types/memory",
+                "types/call"
+            ],
+            "{found:?}"
+        );
+        let messages: Vec<String> = lint(&Analysis::new(text), &Config::default())
+            .into_iter()
+            .filter(|d| d.code.starts_with("types/"))
+            .map(|d| d.message)
+            .collect();
+        assert!(
+            messages[0].contains("node_id is 12, but node.id is at offset 16"),
+            "{messages:?}"
+        );
+        assert!(
+            messages[1]
+                .contains("offset 2 into node isn't at a field (pos at 0, next at 8, id at 16)"),
+            "{messages:?}"
+        );
+        assert!(
+            messages[2].contains("node.pos.y is i32 (4 bytes), but this loads 8"),
+            "{messages:?}"
+        );
+        assert!(messages[3].contains("moving it by 5 bytes"), "{messages:?}");
+        // Loading next gives a ptr<node>, and its next is one too: _f
+        // returns that pointer where it declared i64.
+        assert!(
+            messages[4].contains("_f returns i64, but x0 holds ptr<node>"),
+            "{messages:?}"
+        );
+        // Hover follows the fields.
+        let analysis = Analysis::new(text);
+        let known = types_at(&analysis, text.find("ldr     w4").expect("ldr")).expect("types");
+        assert_eq!(
+            known.get("x1"),
+            Some(&Ty::Int {
+                signed: true,
+                bits: 32
+            })
+        );
+        assert_eq!(
+            known.get("x3"),
+            Some(&Ty::Int {
+                signed: false,
+                bits: 64
+            })
+        );
+        assert_eq!(
+            known.get("x2").map(|t| t.to_string()).as_deref(),
+            Some("ptr<node>")
+        );
+        let known = types_at(&analysis, text.find("ldr     x7").expect("ldr")).expect("types");
+        assert_eq!(
+            known.get("x6").map(|t| t.to_string()).as_deref(),
+            Some("ptr<ptr<node>>")
+        );
+    }
+
+    #[test]
+    fn unknown_structs_are_annotation_errors() {
+        let text = "; armtool: fn _f(x0: ptr<missing>) -> void\n.globl _f\n_f:\n    ret\n";
+        assert_eq!(types(text)[0].0, "types/annotation");
     }
 
     #[test]

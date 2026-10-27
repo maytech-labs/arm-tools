@@ -34,6 +34,7 @@ Name registers as you'd write them: `x0` and `w0` are the same register, as are 
 | `f32`, `f64` | Floating point |
 | `ptr<T>` | A pointer to T, like `ptr<u8>` or `ptr<ptr<i64>>` |
 | `ptr` | A pointer to anything |
+| a struct name | A struct declared with `armtool: struct` |
 
 ## How types flow
 
@@ -47,6 +48,32 @@ From annotations, types follow the code through branches and loops:
 - Anything else makes the register's type unknown. Where paths with different types meet, it's unknown too.
 
 Nothing is reported about an unknown type, so a file without annotations gets no `types/` findings, and you can annotate one function at a time. Hover a register in the editor to see its type at that point.
+
+## Structs
+
+Declare a struct on one line, and use its name as a type ([0041](decisions/0041-structs.md)):
+
+```asm
+; armtool: struct point { x: i32, y: i32 }
+; armtool: struct node { pos: point, next: ptr<node>, id: u64, tag: u8[4] }
+; armtool: fn _walk(x0: ptr<node>) -> u64
+_walk:
+        ldr     w1, [x0, #4]      ; node.pos.y, an i32
+        ldr     x0, [x0, #8]      ; node.next: x0 is a ptr<node> again
+        ldr     x2, [x0, #12]     ; types/memory: offset 12 isn't at a field
+```
+
+The layout is C's: each field at the next multiple of its alignment (a scalar's size, or a struct's largest field), and the size rounded up to the struct's alignment. So `node` is 32 bytes: `pos` at 0, `next` at 8, `id` at 16, `tag` at 24.
+
+Through a `ptr<node>`, loads and stores must land on a field and match its width; offsets past the first node count as the next ones. `add x1, x0, #8` gives a `ptr<ptr<node>>`, a pointer to the `next` field, and `add x1, x0, #32` a `ptr<node>` to the next node.
+
+Name constants for offsets as `struct_field`, and they're checked against the layout:
+
+```asm
+node_next = 8
+node_id   = 12        ; types/layout: node.id is at offset 16
+node_size = 32
+```
 
 ## Signatures from C
 
@@ -76,6 +103,7 @@ At a call to printf, fprintf, sprintf, snprintf, or dprintf, if the format regis
 | `types/signedness` | `b.gt` and friends after comparing unsigned values, `b.hi` and friends after signed ones, `sdiv` and `udiv` on the wrong kind |
 | `types/memory` | Loads and stores of the wrong size for the pointee, offsets and pointer arithmetic that land mid-element, and non-pointers used as addresses |
 | `types/format` | printf arguments that don't match the format string |
+| `types/layout` | `struct_field` and `struct_size` constants that disagree with the layout |
 | `types/pointer-width` | A pointer read through a W register |
 | `types/annotation` | An annotation that can't be read |
 
