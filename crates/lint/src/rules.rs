@@ -128,7 +128,7 @@ pub(crate) const RULES: &[RuleInfo] = &[
         id: "types/annotation",
         default_level: Level::Warning,
         summary: "A type annotation comment that can't be read",
-        explanation: "`armtool:` comments declare types: `fn name(x0: T, ...) -> T` for a function, or `x9: T` for a register here. Types are i8 to i64, u8 to u64, f32, f64, ptr, and ptr<T>. See docs/types.md.",
+        explanation: "`armtool:` comments declare types: `fn name(x0: T, ...) -> T` for a function, or `x9: T` for a register here. Types are i8 to i64, u8 to u64, f32, f64, `ptr`, `ptr<T>`, and declared structs. See docs/types.md.",
     },
     RuleInfo {
         id: "flow/dead-store",
