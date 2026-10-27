@@ -19,10 +19,11 @@ The same file tells `armtool` and `armls` where to find `.include` files, search
 paths = ["include", "../shared"]   # relative to armtool.toml
 ```
 
-The CPU your build targets, so feature errors match it ([0022](decisions/0022-cpu-features.md)). Without this, it's what `clang -arch arm64` targets: apple-m1.
+The platform and CPU your build targets, so syntax and feature errors match it ([0022](decisions/0022-cpu-features.md), [0038](decisions/0038-linux.md)). Without a platform, each file's own syntax decides (`@PAGE` means Darwin, `:lo12:` means Linux), then Darwin; a file can also say `// armtool: platform=linux`. Without a CPU, it's what clang targets by default: apple-m1 on Darwin, generic Armv8-A on Linux.
 
 ```toml
 [target]
+platform = "linux"             # or "darwin"
 cpu = "apple-m4"               # like -mcpu
 arch = "armv8.6-a"             # like -march: added to the CPU's features
 extensions = ["sve", "nolse"]  # like +sve and +nolse

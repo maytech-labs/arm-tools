@@ -77,6 +77,18 @@ Done when Neovim and VS Code show diagnostics, hover, definition, references, co
 - [x] Call hierarchy, across files ([0033](decisions/0033-call-hierarchy.md))
 - [x] `editors/` setup for Neovim and Helix, `make install`, and `cargo xtask nvim-smoke`
 
+## M4b: AArch64 Linux
+
+Done when Linux assembly gets the same checks, lint, and editor features as Darwin's, in its own syntax, with zero survey disagreements against `clang --target=aarch64-linux-gnu` ([0038](decisions/0038-linux.md)).
+
+- [x] `Platform`: `;` separators, GNU precedence, ELF directives, the generic CPU, `.S` preprocessing for Linux
+- [x] `[target] platform`, a file comment, or the file's own syntax picks it; Darwin otherwise
+- [x] Relocation and directive errors that name the other platform
+- [x] Lint per platform: x18 and frame pointers are Darwin's; `:lo12:` pairs; syscalls in x8
+- [x] Editor: register roles, syscall names, snippets, completion, and C names for Linux
+- [x] Linux examples built and run on an Arm Linux CI runner
+- [ ] Linux-specific lint rules, such as checks for `.note.GNU-stack` and `.type`/`.size` on exported functions
+
 ## M5: linter
 
 Done when the first rules in the design run in `armls` and `armtool lint`, each with tests and a doc page, and none fires falsely on the corpus.

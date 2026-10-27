@@ -1,10 +1,17 @@
 # arm-tools
 
-Tools for writing AArch64 assembly on macOS: a language server, a linter, and a formatter, built on one parser and one model of the instruction set.
+Tools for writing AArch64 assembly on macOS and Linux: a language server, a linter, and a formatter, built on one parser and one model of the instruction set.
 
 > **Status: pre-release.** The language server is feature complete for its first release, and `armtool` works: errors as you type in clang's words, operand checking, 13 lint rules, and everything below. See the [roadmap](docs/roadmap.md).
 
-It targets the assembly Apple's toolchain accepts: `clang -c -arch arm64`, Mach-O, the Darwin ABI. That means `_`-prefixed symbols, `@PAGE` and `@PAGEOFF`, `;` comments, `%%` separators, and x18 reserved for the OS.
+Apple silicon comes first. By default it targets the assembly Apple's toolchain accepts: `clang -c -arch arm64`, Mach-O, the Darwin ABI. That means `_`-prefixed symbols, `@PAGE` and `@PAGEOFF`, `;` comments, `%%` separators, and x18 reserved for the OS.
+
+It also handles AArch64 Linux, as `clang --target=aarch64-linux-gnu` and GNU tools accept it: ELF sections and directives, `:lo12:` and `:got:` relocations, `;` as a statement separator, GNU operator precedence, syscalls in x8 with `svc #0`, and the generic CPU's features. Set it per project in `armtool.toml`, or let a file's own syntax say which it is:
+
+```toml
+[target]
+platform = "linux"
+```
 
 | Tool | What it does |
 |---|---|

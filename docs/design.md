@@ -37,6 +37,12 @@ Non-goals for now: AArch32 and Thumb, ELF and GNU-only syntax, x86, assembling o
 
 Every layer produces diagnostics in one shared shape: a byte range, a severity, a message, a code (`syntax`, `operand`, or a lint rule ID), and optional fixes. `armls` converts them to LSP diagnostics; `armtool` prints them.
 
+## Platforms
+
+**Status:** Darwin and Linux (2026-10-27, [0038](decisions/0038-linux.md)).
+
+AArch64 is assembled with two sets of conventions: Apple's (Mach-O) and the GNU/ELF ones Linux uses. `arm_syntax::Platform` carries the choice through every layer: the lexer (`;` is a comment on Darwin and a separator on Linux), the parser's operator precedence, the directive tables, default CPU features, relocation syntax, lint rules, and editor features. Darwin is the default; `[target] platform`, a file comment, or the file's own syntax selects Linux.
+
 ## Syntax
 
 **Status:** Done (2026-10-26). The grammar is in [0011](decisions/0011-parser-grammar.md) and [0012](decisions/0012-parser-survey-fixes.md).
