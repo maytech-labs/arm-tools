@@ -705,6 +705,60 @@ fn navigation_between_linked_files() {
 }
 
 #[test]
+fn navigation_into_c() {
+    let root = std::env::temp_dir().join(format!("armls-c-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("dir");
+    let main = ".globl _main\n_main:\n    bl _add2\n    ret\n";
+    let c = "#include <stdio.h>\n\nint add2(int a, int b) {\n    return a + b;\n}\n";
+    std::fs::write(root.join("main.s"), main).expect("write");
+    std::fs::write(root.join("math.c"), c).expect("write");
+    let root_uri = format!("file://{}", root.display());
+    let main_uri = format!("{root_uri}/main.s");
+    let mut client = Client::start_in(true, Some(&root_uri));
+    client.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": main_uri, "languageId": "asm", "version": 1, "text": main } }),
+    );
+    let at_call = json!({ "textDocument": { "uri": main_uri }, "position": start(2, 9) });
+    let definition = client.request("textDocument/definition", at_call.clone())["result"].clone();
+    assert_eq!(definition["uri"], format!("{root_uri}/math.c").as_str());
+    assert_eq!(definition["range"]["start"], start(2, 4));
+    assert_eq!(definition["range"]["end"], start(2, 8));
+
+    let hover = client.request("textDocument/hover", at_call.clone())["result"].clone();
+    let text = hover["contents"]["value"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("**_add2** (C function in math.c)") && text.contains("```c\nint add2"),
+        "{text}"
+    );
+
+    // Outgoing calls from _main reach into the C file.
+    let items = client.request(
+        "textDocument/prepareCallHierarchy",
+        json!({ "textDocument": { "uri": main_uri }, "position": start(1, 1) }),
+    )["result"]
+        .clone();
+    let outgoing =
+        client.request("callHierarchy/outgoingCalls", json!({ "item": items[0] }))["result"]
+            .clone();
+    assert_eq!(outgoing[0]["to"]["detail"], "math.c", "{outgoing}");
+    assert_eq!(
+        outgoing[0]["to"]["uri"],
+        format!("{root_uri}/math.c").as_str()
+    );
+
+    // C names aren't renamed from assembly.
+    let mut params = at_call.clone();
+    params["newName"] = json!("_sum2");
+    let refused = client.request("textDocument/rename", params);
+    let message = refused["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("C function"), "{refused}");
+    assert!(client.shutdown().success());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn call_hierarchy_across_files() {
     let root = std::env::temp_dir().join(format!("armls-calls-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

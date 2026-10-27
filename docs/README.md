@@ -42,3 +42,4 @@
 - [0031 Rename global labels across the project](decisions/0031-cross-file-rename.md)
 - [0032 Completion snippets for Apple's conventions](decisions/0032-snippets.md)
 - [0033 Call hierarchy from the control-flow graph's functions](decisions/0033-call-hierarchy.md)
+- [0034 Index C function definitions by scanning](decisions/0034-c-functions.md)

@@ -4,6 +4,9 @@
 //! Only global labels (`.globl`, `.private_extern`) can be linked to from
 //! another object file on Mach-O, so those are the definitions indexed. Each
 //! file's uses of names it doesn't define are indexed too, for references.
+//! C and Objective-C files add their non-static function definitions, under
+//! the symbol names the compiler gives them: `foo` is `_foo`
+//! (docs/decisions/0034-c-functions.md).
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -62,8 +65,17 @@ impl Index {
 
     /// Reindexes one file from its current text.
     pub fn update(&mut self, path: &Path, text: &str) {
-        let analysis = Analysis::new(text);
-        self.files.insert(path.to_path_buf(), summarize(&analysis));
+        let file = if is_c(path) {
+            IndexedFile {
+                text: Arc::from(text),
+                definitions: c_functions(text),
+                references: Vec::new(),
+                calls: arm_lint::CallGraph::default(),
+            }
+        } else {
+            summarize(&Analysis::new(text))
+        };
+        self.files.insert(path.to_path_buf(), file);
     }
 
     /// Reindexes a file from disk, or drops it if it's gone.
@@ -194,6 +206,136 @@ fn summarize(analysis: &Analysis) -> IndexedFile {
     }
 }
 
+/// C and Objective-C sources, whose functions assembly can call.
+pub fn is_c(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "c" || e == "m")
+}
+
+/// The functions a C file defines that other files can link to, by symbol
+/// name (`_foo` for `foo`), each with the range of its name. Skips `static`
+/// functions, prototypes, and anything inside braces. A scan, not a parser:
+/// it reads comments, strings, and preprocessor lines as nothing, and takes
+/// the name before the last parenthesized group ahead of a top-level `{`.
+pub fn c_functions(text: &str) -> Vec<(String, Range<usize>)> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut parens = 0usize;
+    // The statement so far at the top level.
+    let mut candidate: Option<Range<usize>> = None;
+    let mut is_static = false;
+    let mut assigns = false;
+    let mut last_ident: Option<Range<usize>> = None;
+    let mut line_start = true;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        let at_line_start = line_start;
+        line_start = c == b'\n' || (line_start && (c == b' ' || c == b'\t'));
+        match c {
+            b'#' if at_line_start => {
+                // A preprocessor line, with its continuations.
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                line_start = true;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                line_start = true;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'"' | b'\'' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != c && bytes[i] != b'\n' {
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                last_ident = None;
+            }
+            b'{' => {
+                if depth == 0
+                    && parens == 0
+                    && let Some(name) = candidate.take().filter(|_| !is_static && !assigns)
+                {
+                    out.push((format!("_{}", &text[name.clone()]), name));
+                }
+                depth += 1;
+                last_ident = None;
+            }
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    candidate = None;
+                    is_static = false;
+                    assigns = false;
+                }
+                last_ident = None;
+            }
+            _ if depth > 0 => {}
+            b'(' => {
+                if parens == 0 {
+                    let attribute = last_ident.as_ref().is_some_and(|r| {
+                        matches!(
+                            &text[r.clone()],
+                            "__attribute__" | "__asm" | "__asm__" | "asm"
+                        )
+                    });
+                    if !attribute {
+                        candidate = last_ident.take();
+                    }
+                }
+                parens += 1;
+                last_ident = None;
+            }
+            b')' => {
+                parens = parens.saturating_sub(1);
+                last_ident = None;
+            }
+            b';' => {
+                if parens == 0 {
+                    candidate = None;
+                    is_static = false;
+                    assigns = false;
+                }
+                last_ident = None;
+            }
+            b'=' if parens == 0 => {
+                assigns = true;
+                last_ident = None;
+            }
+            c if c.is_ascii_alphabetic() || c == b'_' => {
+                let start = i;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                if parens == 0 && &text[start..i] == "static" {
+                    is_static = true;
+                }
+                last_ident = Some(start..i);
+                continue;
+            }
+            c if c.is_ascii_whitespace() => {}
+            _ => last_ident = None,
+        }
+        i += 1;
+    }
+    out
+}
+
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     if out.len() >= MAX_FILES {
         return;
@@ -213,7 +355,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
                 walk(&path, out);
             }
         } else if kind.is_file()
-            && path.extension().is_some_and(|e| e == "s" || e == "S")
+            && (path.extension().is_some_and(|e| e == "s" || e == "S") || is_c(&path))
             && entry.metadata().is_ok_and(|m| m.len() <= MAX_FILE_BYTES)
         {
             out.push(path);
@@ -281,6 +423,66 @@ mod tests {
         assert!(path.ends_with("src/main.s"));
         let callees: Vec<&str> = main.calls.calls.iter().map(|c| c.callee.as_str()).collect();
         assert_eq!(callees, ["_helper", "_printf"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn c_names(text: &str) -> Vec<(String, &str)> {
+        c_functions(text)
+            .into_iter()
+            .map(|(symbol, range)| (symbol, &text[range]))
+            .collect()
+    }
+
+    #[test]
+    fn finds_c_function_definitions() {
+        let text = r#"#include <stdio.h>
+#define MAX(a, b) \
+    ((a) > (b) ? (a) : (b))
+/* int fake(void) { } */
+// int fake2(void) { }
+struct point { int x, y; };
+int table[] = { 1, 2 };
+int prototype(int x);
+static int hidden(void) { return 0; }
+static inline int hidden2(void) { return 0; }
+const char *greet(const char *name) {
+    if (name) { puts("{"); }
+    return name;
+}
+void (*callback)(int) = 0;
+__attribute__((noreturn)) void die(int code) __attribute__((cold)) {
+    for (;;) {}
+}
+int
+main(int argc, char **argv)
+{
+    return greet("x") != 0;
+}
+- (void)method:(int)x {
+}
+"#;
+        let found: Vec<String> = c_names(text).into_iter().map(|(s, _)| s).collect();
+        assert_eq!(found, ["_greet", "_die", "_main"]);
+        assert!(c_names(text).iter().all(|(s, name)| s[1..] == **name));
+    }
+
+    #[test]
+    fn indexes_c_files_beside_assembly() {
+        let root = project("c");
+        std::fs::write(
+            root.join("src/lib/math.c"),
+            "int add2(int a, int b) { return a + b; }\n",
+        )
+        .expect("write");
+        std::fs::write(root.join("src/lib/view.m"), "void draw(void) {}\n").expect("write");
+        std::fs::write(root.join("src/lib/math.h"), "int add2(int a, int b);\n").expect("write");
+        let index = Index::scan(std::slice::from_ref(&root));
+        let add = index.definitions("_add2", None);
+        assert_eq!(add.len(), 1, "the header's prototype isn't a definition");
+        assert!(add[0].path.ends_with("math.c"));
+        assert_eq!(index.definitions("_draw", None).len(), 1);
+        assert!(index.global_names().contains(&"_add2".to_string()));
+        assert!(!is_c(Path::new("math.h")) && is_c(Path::new("view.m")));
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -653,8 +653,15 @@ impl Server<'_> {
                         )));
                     }
                     let path = file_path(uri).map(|p| arm_sema::normalize(&p));
+                    let definitions = self.index.definitions(&name, path.as_deref());
+                    if let Some(c) = definitions.iter().find(|p| crate::workspace::is_c(&p.path)) {
+                        return Err(Failure::Refused(format!(
+                            "'{name}' is a C function in {}: rename it there",
+                            c.path.display()
+                        )));
+                    }
                     let mut places = self.index.references(&name, path.as_deref());
-                    places.extend(self.index.definitions(&name, path.as_deref()));
+                    places.extend(definitions);
                     for place in places {
                         if let Some(location) = self.location(&place) {
                             changes.entry(location.uri).or_default().push(TextEdit {
@@ -886,7 +893,23 @@ impl Server<'_> {
                     .function_item(&home, callee)
                     .or_else(|| {
                         let place = self.index.definitions(callee, None).into_iter().next()?;
-                        self.function_item(&place.path, callee)
+                        self.function_item(&place.path, callee).or_else(|| {
+                            // A C function: its name is all we know.
+                            let location = self.location(&place)?;
+                            Some(lsp_types::CallHierarchyItem {
+                                name: callee.to_string(),
+                                kind: LspSymbolKind::FUNCTION,
+                                tags: None,
+                                detail: place
+                                    .path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().into_owned()),
+                                uri: location.uri,
+                                range: location.range,
+                                selection_range: location.range,
+                                data: None,
+                            })
+                        })
                     })
                     .or_else(|| {
                         let at = self.range_in(&file.text, ranges[0].clone());
@@ -960,11 +983,16 @@ impl Server<'_> {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let (what, language) = if crate::workspace::is_c(&place.path) {
+            ("C function", "c")
+        } else {
+            ("global label", "asm")
+        };
         Some(lsp_types::Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: format!(
-                    "**{}** (global label in {name})\n\n```asm\n{}\n```",
+                    "**{}** ({what} in {name})\n\n```{language}\n{}\n```",
                     reference.name,
                     text[start..end].trim()
                 ),
