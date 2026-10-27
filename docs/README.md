@@ -46,3 +46,4 @@
 - [0035 Keeping armls fast on large files and projects](decisions/0035-performance.md)
 - [0036 Instruction descriptions as a Rust table](decisions/0036-instruction-descriptions.md)
 - [0037 Checking the aliases clang handles in C++](decisions/0037-cpp-aliases.md)
+- [0038 AArch64 Linux as a second platform](decisions/0038-linux.md)

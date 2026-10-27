@@ -1,0 +1,1 @@
+.typo main, %function

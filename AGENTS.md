@@ -32,7 +32,7 @@ The design is in [docs/design.md](docs/design.md), the milestones in [docs/roadm
 ## Rules
 
 1. **Rust only**, built with Cargo ([0002](docs/decisions/0002-rust-and-cargo.md)). The one exception is `editors/vscode`, TypeScript glue that starts armls ([0025](docs/decisions/0025-distribution.md)); check it with `npm run check` there. Prefer small dependencies; say why in the commit or an ADR when you add one.
-2. **Apple's assembler is the source of truth** ([0004](docs/decisions/0004-apple-aarch64-first.md)). If clang (`clang -c -arch arm64`) accepts it, we accept it; if clang rejects it, we report it. When unsure, probe clang and write the result down as a test.
+2. **Clang is the source of truth** ([0004](docs/decisions/0004-apple-aarch64-first.md), [0038](docs/decisions/0038-linux.md)): `clang -c -arch arm64` for Darwin, the main platform, and `clang -c --target=aarch64-linux-gnu` for Linux. If clang accepts it, we accept it; if clang rejects it, we report it. When unsure, probe clang and write the result down as a test.
 3. **Never lose a byte.** The syntax tree is lossless ([0008](docs/decisions/0008-lossless-syntax-tree.md)). The parser never fails: bad input becomes error nodes plus diagnostics, and the rest of the file still parses.
 4. **Never crash the server.** A panic in `armls` kills the user's editor session. Same rule as below: no `unwrap`/`expect` outside tests unless a comment proves it can't fail.
 5. **Diagnostics that teach.** Every diagnostic says what's wrong and what to do, and lint diagnostics name their rule ID.
@@ -58,7 +58,10 @@ Two kinds of test, plus an oracle ([0007](docs/decisions/0007-testing.md)).
   git clone --depth 1 --filter=blob:none --sparse https://github.com/llvm/llvm-project /tmp/llvm-project
   git -C /tmp/llvm-project sparse-checkout set llvm/test/MC/AArch64
   cargo xtask survey /tmp/llvm-project/llvm/test/MC/AArch64 crates/syntax/tests/data
+  cargo xtask survey --linux /tmp/llvm-project/llvm/test/MC/AArch64 crates/syntax/tests/data
   ```
+
+  Both platforms must have zero disagreements ([0038](docs/decisions/0038-linux.md)).
 
 - **Instruction tables:** to regenerate, check out the LLVM tag matching `llvm-tblgen --version` (21.1.8 today) and run `cargo xtask gen-isa --llvm <checkout> --tblgen $(brew --prefix llvm)/bin/llvm-tblgen`. Run `cargo xtask gen-isa` alone for the sparse checkout command. The output must be identical when nothing in LLVM changed.
 

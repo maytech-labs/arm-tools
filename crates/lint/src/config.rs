@@ -9,6 +9,7 @@
 //! paths = ["include", "../shared"]   # relative to this file
 //!
 //! [target]                         # like -mcpu, -march, and +ext
+//! platform = "darwin"               # or "linux"; else each file's own clues
 //! cpu = "apple-m4"
 //! arch = "armv8.6-a"
 //! extensions = ["sve", "nolse"]
@@ -44,8 +45,12 @@ pub struct Config {
     /// Directories to search for `.include` files, as written.
     include: Vec<PathBuf>,
     pub format: arm_syntax::FormatOptions,
-    /// The CPU features the build enables, from `[target]`.
-    pub features: arm_isa::FeatureSet,
+    /// The platform from `[target]`, if set. Otherwise each file's own text
+    /// decides, then Darwin ([`Config::platform_for`]).
+    pub platform: Option<arm_syntax::Platform>,
+    /// `[target]`'s CPU, architecture, and extensions, which set the
+    /// features on top of the platform's default CPU.
+    target: TargetSection,
     /// Where it was read from, if anywhere.
     pub path: Option<PathBuf>,
 }
@@ -63,9 +68,10 @@ struct File {
     target: TargetSection,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct TargetSection {
+    platform: Option<String>,
     cpu: Option<String>,
     arch: Option<String>,
     #[serde(default)]
@@ -73,14 +79,15 @@ struct TargetSection {
 }
 
 impl TargetSection {
-    /// Features as clang's driver builds them on Darwin: the CPU's (apple-m1
-    /// unless set), plus the architecture's, then each extension.
-    fn features(&self) -> Result<arm_isa::FeatureSet, String> {
+    /// Features as clang's driver builds them: the CPU's (apple-m1 on
+    /// Darwin and generic on Linux, unless set), plus the architecture's,
+    /// then each extension.
+    fn features(&self, platform: arm_syntax::Platform) -> Result<arm_isa::FeatureSet, String> {
         let mut set = match &self.cpu {
             Some(cpu) => {
                 arm_isa::FeatureSet::for_cpu(cpu).map_err(|e| format!("[target] cpu: {e}"))?
             }
-            None => arm_isa::FeatureSet::apple_default(),
+            None => arm_isa::FeatureSet::default_for(platform),
         };
         if let Some(arch) = &self.arch {
             set.add_arch(arch)
@@ -119,7 +126,8 @@ impl Default for Config {
             levels: HashMap::new(),
             include: Vec::new(),
             format: arm_syntax::FormatOptions::default(),
-            features: arm_isa::FeatureSet::apple_default(),
+            platform: None,
+            target: TargetSection::default(),
             path: None,
         }
     }
@@ -142,7 +150,18 @@ impl Config {
                 return Err(message);
             }
         }
-        let features = file.target.features()?;
+        let platform = match &file.target.platform {
+            None => None,
+            Some(name) => Some(arm_syntax::Platform::from_name(name).ok_or_else(|| {
+                format!(
+                    "[target] platform: unknown platform '{name}'. Use \"darwin\" or \"linux\"."
+                )
+            })?),
+        };
+        // Report a bad CPU or architecture now, not on the first file.
+        for platform in [arm_syntax::Platform::Darwin, arm_syntax::Platform::Linux] {
+            file.target.features(platform)?;
+        }
         let defaults = arm_syntax::FormatOptions::default();
         let f = file.format;
         Ok(Config {
@@ -153,10 +172,36 @@ impl Config {
                 mnemonic_width: f.mnemonic_width.unwrap_or(defaults.mnemonic_width),
                 comment_column: f.comment_column.unwrap_or(defaults.comment_column),
                 max_blank_lines: f.max_blank_lines.unwrap_or(defaults.max_blank_lines),
+                platform: defaults.platform,
             },
-            features,
+            platform,
+            target: file.target,
             path: None,
         })
+    }
+
+    /// The platform a file is for: `[target] platform` if set, else what the
+    /// file's text gives away, else Darwin.
+    pub fn platform_for(&self, text: &str) -> arm_syntax::Platform {
+        self.platform
+            .or_else(|| arm_syntax::Platform::detect(text))
+            .unwrap_or_default()
+    }
+
+    /// The CPU features enabled at the top of a file for a platform.
+    pub fn features_for(&self, platform: arm_syntax::Platform) -> arm_isa::FeatureSet {
+        // Checked when the config was read.
+        self.target
+            .features(platform)
+            .unwrap_or_else(|_| arm_isa::FeatureSet::default_for(platform))
+    }
+
+    /// Formatting options for a platform's files.
+    pub fn format_for(&self, platform: arm_syntax::Platform) -> arm_syntax::FormatOptions {
+        arm_syntax::FormatOptions {
+            platform,
+            ..self.format.clone()
+        }
     }
 
     /// Reads the nearest `armtool.toml` at or above `start`, or the defaults
@@ -249,12 +294,41 @@ mod tests {
     fn target_features() {
         let config = Config::parse("[target]\ncpu = \"apple-m4\"\nextensions = [\"nolse\"]\n")
             .expect("valid");
-        assert!(config.features.has("sme") && !config.features.has("lse"));
+        let darwin = arm_syntax::Platform::Darwin;
+        let linux = arm_syntax::Platform::Linux;
+        let features = config.features_for(darwin);
+        assert!(features.has("sme") && !features.has("lse"));
         let arch = Config::parse("[target]\narch = \"armv8.6-a\"\n").expect("valid");
-        assert!(arch.features.has("bf16") && arch.features.has("aes"));
-        assert!(Config::default().features.has("lse"));
+        assert!(arch.features_for(darwin).has("bf16") && arch.features_for(darwin).has("aes"));
+        assert!(Config::default().features_for(darwin).has("lse"));
         let bad = Config::parse("[target]\ncpu = \"pentium\"\n").unwrap_err();
         assert!(bad.contains("[target] cpu: unknown CPU 'pentium'"), "{bad}");
+        // Linux starts from the generic CPU; -march adds to it.
+        assert!(!Config::default().features_for(linux).has("lse"));
+        let v81 = Config::parse("[target]\narch = \"armv8.1-a\"\n").expect("valid");
+        assert!(v81.features_for(linux).has("lse"));
+    }
+
+    #[test]
+    fn target_platform() {
+        let linux = Config::parse("[target]\nplatform = \"linux\"\n").expect("valid");
+        assert_eq!(
+            linux.platform_for("adrp x0, _s@PAGE\n"),
+            arm_syntax::Platform::Linux
+        );
+        assert_eq!(
+            linux.format_for(arm_syntax::Platform::Linux).platform,
+            arm_syntax::Platform::Linux
+        );
+        // Unset: the file decides, then Darwin.
+        let unset = Config::default();
+        assert_eq!(
+            unset.platform_for("add x0, x0, :lo12:s\n"),
+            arm_syntax::Platform::Linux
+        );
+        assert_eq!(unset.platform_for("ret\n"), arm_syntax::Platform::Darwin);
+        let bad = Config::parse("[target]\nplatform = \"windows\"\n").unwrap_err();
+        assert!(bad.contains("unknown platform 'windows'"), "{bad}");
     }
 
     #[test]

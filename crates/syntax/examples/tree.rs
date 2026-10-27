@@ -1,4 +1,5 @@
 //! Prints the tree for a file or for stdin: `cargo run -p arm-syntax --example tree -- a.s`.
+//! The platform is what the text gives away (`armtool: platform=linux`), else Darwin.
 
 use std::io::Read;
 
@@ -12,5 +13,6 @@ fn main() {
         eprintln!("can't read input: {error}");
         std::process::exit(2);
     }
-    print!("{}", arm_syntax::parse(&text).debug_tree());
+    let platform = arm_syntax::Platform::detect(&text).unwrap_or_default();
+    print!("{}", arm_syntax::parse_for(&text, platform).debug_tree());
 }

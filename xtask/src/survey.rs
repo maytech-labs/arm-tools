@@ -12,20 +12,34 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-/// Clang flags that enable every extension, so feature errors don't hide syntax.
-const CLANG: &[&str] = &[
-    "clang",
-    "-c",
-    "-arch",
-    "arm64",
-    "-march=armv9.4-a+sve2+sme2",
-];
+/// Every extension on, so feature errors don't hide syntax.
+const MARCH: &str = "armv9.4-a+sve2+sme2";
+
+/// Clang's flags for a platform: Darwin's `-arch arm64` or Linux's ELF target.
+fn clang_args(platform: arm_syntax::Platform) -> Vec<String> {
+    let target = match platform {
+        arm_syntax::Platform::Darwin => vec!["-arch".to_string(), "arm64".to_string()],
+        arm_syntax::Platform::Linux => vec!["--target=aarch64-linux-gnu".to_string()],
+    };
+    let mut args = vec!["clang".to_string(), "-c".to_string()];
+    args.extend(target);
+    args.push(format!("-march={MARCH}"));
+    args
+}
 
 pub fn run(args: Vec<String>) -> ExitCode {
     let recall = args.iter().any(|a| a == "--recall");
-    let paths: Vec<String> = args.into_iter().filter(|a| a != "--recall").collect();
+    let platform = if args.iter().any(|a| a == "--linux") {
+        arm_syntax::Platform::Linux
+    } else {
+        arm_syntax::Platform::Darwin
+    };
+    let paths: Vec<String> = args
+        .into_iter()
+        .filter(|a| a != "--recall" && a != "--linux")
+        .collect();
     if paths.is_empty() {
-        eprintln!("usage: cargo xtask survey [--recall] <path>...");
+        eprintln!("usage: cargo xtask survey [--recall] [--linux] <path>...");
         return ExitCode::from(2);
     }
     let scratch = std::env::temp_dir().join(format!("arm-tools-survey-{}", std::process::id()));
@@ -47,11 +61,11 @@ pub fn run(args: Vec<String>) -> ExitCode {
         let Ok(text) = std::fs::read_to_string(file) else {
             continue;
         };
-        let ours = error_lines(&text);
+        let ours = error_lines(&text, platform);
         if ours.is_empty() && !recall {
             continue;
         }
-        let mut theirs = match clang_errors(file, &scratch) {
+        let mut theirs = match clang_errors(file, &scratch, platform) {
             Ok(errors) => errors,
             Err(error) => {
                 eprintln!("{error}");
@@ -74,7 +88,8 @@ pub fn run(args: Vec<String>) -> ExitCode {
             let source = text.lines().nth(line - 1).unwrap_or_default();
             let alone = scratch.join("line.s");
             let rejected_alone = std::fs::write(&alone, format!("{source}\n")).is_ok()
-                && clang_errors(&alone, &scratch).is_ok_and(|e| !e.lines.is_empty() || e.late > 0);
+                && clang_errors(&alone, &scratch, platform)
+                    .is_ok_and(|e| !e.lines.is_empty() || e.late > 0);
             if rejected_alone {
                 isolated += 1;
             } else {
@@ -122,16 +137,13 @@ fn walk(path: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// 1-based lines where arm-sema reports an error, with the first message on each.
-fn error_lines(text: &str) -> BTreeMap<usize, String> {
+fn error_lines(text: &str, platform: arm_syntax::Platform) -> BTreeMap<usize, String> {
     let mut lines = BTreeMap::new();
-    // The same target as the clang command below.
-    // On Darwin, -march adds to the apple-m1 CPU's features.
-    let mut features = arm_isa::FeatureSet::apple_default();
-    let features = features
-        .add_arch("armv9.4-a+sve2+sme2")
-        .ok()
-        .map(|()| features);
-    let analysis = arm_sema::Analysis::with_options(text, None, None, features);
+    // The same target as the clang command below: -march adds to the
+    // platform's default CPU.
+    let mut features = arm_isa::FeatureSet::default_for(platform);
+    let features = features.add_arch(MARCH).ok().map(|()| features);
+    let analysis = arm_sema::Analysis::with_platform(text, None, None, features, platform);
     let errors = analysis
         .diagnostics()
         .iter()
@@ -153,9 +165,13 @@ struct ClangErrors {
     late: usize,
 }
 
-fn clang_errors(file: &Path, scratch: &Path) -> Result<ClangErrors, String> {
+fn clang_errors(
+    file: &Path,
+    scratch: &Path,
+    platform: arm_syntax::Platform,
+) -> Result<ClangErrors, String> {
     let output = Command::new("xcrun")
-        .args(CLANG)
+        .args(clang_args(platform))
         .arg("-o")
         .arg(scratch.join("out.o"))
         .arg(file)

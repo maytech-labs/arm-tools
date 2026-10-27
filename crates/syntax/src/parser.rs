@@ -12,7 +12,7 @@ use std::ops::Range;
 use rowan::{Checkpoint, GreenNode, GreenNodeBuilder};
 
 use crate::SyntaxKind::{self, *};
-use crate::{SyntaxNode, ast, lex};
+use crate::{Platform, SyntaxNode, ast, lex_for};
 
 /// A problem in the source, with its byte range.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,11 +77,19 @@ impl Parse {
     }
 }
 
-/// Parses a whole file. Never fails; see the module docs.
+/// Parses a whole file with Apple's conventions. Never fails; see the
+/// module docs.
 pub fn parse(text: &str) -> Parse {
-    let lexed = lex(text);
+    parse_for(text, Platform::Darwin)
+}
+
+/// Parses a whole file with a platform's conventions: its separators and
+/// comments, and its operator precedence.
+pub fn parse_for(text: &str, platform: Platform) -> Parse {
+    let lexed = lex_for(text, platform);
     let mut parser = Parser {
         text,
+        platform,
         tokens: lexed.ranges().collect(),
         pos: 0,
         builder: GreenNodeBuilder::new(),
@@ -115,17 +123,30 @@ const SHIFTS: &[&str] = &[
     "sxtx", "mul",
 ];
 
-/// Binding power of a binary operator, using Apple's (LLVM's Darwin) table.
-/// Probed with clang 21; see docs/design.md#syntax.
-fn binary_precedence(kind: SyntaxKind) -> Option<u8> {
-    Some(match kind {
-        AmpAmp | PipePipe => 1,
-        Pipe | Caret | Amp => 2,
-        EqEq | NotEq | Lt | LtEq | Gt | GtEq => 3,
-        Shl | Shr => 4,
-        Plus | Minus => 5,
-        Star | Slash | Percent => 6,
-        _ => return None,
+/// Binding power of a binary operator. Apple's table (LLVM's
+/// `getDarwinBinOpPrecedence`) was probed with clang 21; see
+/// docs/design.md#syntax. Linux uses `getGNUBinOpPrecedence`, where shifts
+/// bind like multiplication and bitwise operators above `+` and `-`.
+fn binary_precedence(kind: SyntaxKind, platform: Platform) -> Option<u8> {
+    Some(match platform {
+        Platform::Darwin => match kind {
+            AmpAmp | PipePipe => 1,
+            Pipe | Caret | Amp => 2,
+            EqEq | NotEq | Lt | LtEq | Gt | GtEq => 3,
+            Shl | Shr => 4,
+            Plus | Minus => 5,
+            Star | Slash | Percent => 6,
+            _ => return None,
+        },
+        Platform::Linux => match kind {
+            PipePipe => 1,
+            AmpAmp => 2,
+            EqEq | NotEq | Lt | LtEq | Gt | GtEq => 3,
+            Plus | Minus => 4,
+            Pipe | Caret | Amp => 5,
+            Star | Slash | Percent | Shl | Shr => 6,
+            _ => return None,
+        },
     })
 }
 
@@ -159,6 +180,7 @@ const BODY_STARTS: &[(&str, &[&str])] = &[
 
 struct Parser<'t> {
     text: &'t str,
+    platform: Platform,
     tokens: Vec<(SyntaxKind, Range<usize>)>,
     /// Index of the next token to emit, trivia included.
     pos: usize,
@@ -468,7 +490,7 @@ impl Parser<'_> {
     fn expr_bp(&mut self, min: u8) {
         let checkpoint = self.checkpoint();
         self.unary();
-        while let Some(precedence) = binary_precedence(self.current()) {
+        while let Some(precedence) = binary_precedence(self.current(), self.platform) {
             if precedence <= min {
                 break;
             }

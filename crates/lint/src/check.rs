@@ -25,9 +25,10 @@ pub fn check(
     open: HashMap<PathBuf, String>,
     lint: bool,
 ) -> Checked {
-    let features = Some(config.features.clone());
+    let platform = config.platform_for(text);
+    let features = Some(config.features_for(platform));
     let Some(path) = path else {
-        let analysis = Analysis::with_options(text, None, None, features);
+        let analysis = Analysis::with_platform(text, None, None, features, platform);
         let diagnostics = findings(&analysis, config, lint);
         return Checked {
             analysis,
@@ -39,11 +40,12 @@ pub fn check(
         dirs: dirs.clone(),
         open,
     };
-    let analysis = Analysis::with_options(
+    let analysis = Analysis::with_platform(
         text,
         Some(path.to_path_buf()),
         Some(&resolver),
         features.clone(),
+        platform,
     );
     if !arm_sema::needs_preprocessing(path) {
         let diagnostics = findings(&analysis, config, lint);
@@ -52,13 +54,14 @@ pub fn check(
             diagnostics,
         };
     }
-    let diagnostics = match arm_sema::preprocess(text, path, &dirs) {
+    let diagnostics = match arm_sema::preprocess_for(text, path, &dirs, platform) {
         Ok(preprocessed) => {
-            let output = Analysis::with_options(
+            let output = Analysis::with_platform(
                 &preprocessed.text,
                 Some(path.to_path_buf()),
                 Some(&resolver),
                 features,
+                platform,
             );
             preprocessed.map_diagnostics(text, findings(&output, config, lint))
         }

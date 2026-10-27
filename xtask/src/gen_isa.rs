@@ -80,11 +80,23 @@ fn generate(llvm: &Path, tblgen: &Path) -> Result<String, String> {
     let reg_numbers = parse_register_enum(&register_info)?;
     let reg_classes = parse_register_classes(&matcher)?;
     let reg_names = parse_register_names(&matcher, &parser_cpp)?;
-    let directives = probe_directives(&[
-        read(&llvm.join("llvm/lib/MC/MCParser/AsmParser.cpp"))?,
-        read(&llvm.join("llvm/lib/MC/MCParser/DarwinAsmParser.cpp"))?,
-        parser_cpp.clone(),
-    ])?;
+    let generic = read(&llvm.join("llvm/lib/MC/MCParser/AsmParser.cpp"))?;
+    let directives = probe_directives(
+        &[
+            generic.clone(),
+            read(&llvm.join("llvm/lib/MC/MCParser/DarwinAsmParser.cpp"))?,
+            parser_cpp.clone(),
+        ],
+        &["-arch", "arm64"],
+    )?;
+    let elf_directives = probe_directives(
+        &[
+            generic,
+            read(&llvm.join("llvm/lib/MC/MCParser/ELFAsmParser.cpp"))?,
+            parser_cpp.clone(),
+        ],
+        &["--target=aarch64-linux-gnu"],
+    )?;
 
     if reg_numbers.len() != reg_classes.len() {
         return Err(format!(
@@ -128,6 +140,7 @@ fn generate(llvm: &Path, tblgen: &Path) -> Result<String, String> {
         reg_numbers: &reg_numbers,
         class_index: &class_index,
         directives: &directives,
+        elf_directives: &elf_directives,
     })?;
     features.render(&mut out, &feature_predicates);
     std::fs::write(OUTPUT, out).map_err(|e| format!("can't write {OUTPUT}: {e}"))?;
@@ -636,10 +649,12 @@ fn parse_register_names(
     Ok(out)
 }
 
-/// Directive names clang accepts on macOS. Candidates are every `".name"`
-/// string in LLVM's generic, Darwin, and AArch64 parsers; each is assembled
-/// alone with clang, and kept unless clang calls it an unknown directive.
-fn probe_directives(sources: &[String]) -> Result<Vec<String>, String> {
+/// Directive names clang accepts for a target: `-arch arm64` for macOS,
+/// `--target=aarch64-linux-gnu` for Linux. Candidates are every `".name"`
+/// string in the sources (LLVM's generic parser, the object format's, and
+/// AArch64's); each is assembled alone with clang, and kept unless clang
+/// calls it an unknown directive.
+fn probe_directives(sources: &[String], target: &[&str]) -> Result<Vec<String>, String> {
     // `.loh` is named by a function, MCLOHDirectiveName(), not a literal.
     // Harvesting LLVM's AArch64 MC tests found no other gaps (2026-10-26).
     let mut candidates = std::collections::BTreeSet::from([".loh".to_string()]);
@@ -668,7 +683,9 @@ fn probe_directives(sources: &[String]) -> Result<Vec<String>, String> {
         std::fs::write(&source, format!("{candidate}\n"))
             .map_err(|e| format!("can't write {}: {e}", source.display()))?;
         let out = Command::new("xcrun")
-            .args(["clang", "-c", "-arch", "arm64", "-o"])
+            .arg("clang")
+            .args(target)
+            .args(["-c", "-o"])
             .arg(dir.join("probe.o"))
             .arg(&source)
             .output()
@@ -701,6 +718,7 @@ struct Render<'a> {
     reg_numbers: &'a HashMap<String, usize>,
     class_index: &'a HashMap<&'a str, usize>,
     directives: &'a [String],
+    elf_directives: &'a [String],
 }
 
 fn render(r: &Render) -> Result<String, String> {
@@ -875,6 +893,15 @@ fn render(r: &Render) -> Result<String, String> {
     );
     let _ = writeln!(w, "pub(crate) static DIRECTIVES: &[&str] = &[");
     for d in r.directives {
+        let _ = writeln!(w, "    {d:?},");
+    }
+    let _ = writeln!(w, "];\n");
+    let _ = writeln!(
+        w,
+        "/// Sorted. Directive names clang accepts for aarch64-linux-gnu (ELF)."
+    );
+    let _ = writeln!(w, "pub(crate) static ELF_DIRECTIVES: &[&str] = &[");
+    for d in r.elf_directives {
         let _ = writeln!(w, "    {d:?},");
     }
     let _ = writeln!(w, "];");

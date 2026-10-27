@@ -462,9 +462,7 @@ fn check_class(class: OperandClass, operand: &Operand) -> Check {
     if let Operand::Ident(name) = operand {
         let lower = name.to_ascii_lowercase();
         let readings = [
-            crate::CONDITION_CODES
-                .contains(&lower.as_str())
-                .then(|| Operand::CondCode(lower.clone())),
+            crate::is_condition(&lower).then(|| Operand::CondCode(lower.clone())),
             Some(Operand::Imm(Imm::Symbol {
                 name: name.clone(),
                 variant: None,

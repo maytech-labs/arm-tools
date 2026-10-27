@@ -25,7 +25,7 @@ pub use docs::{Signature, directive_description, syscall_name};
 pub use features::FeatureSet;
 use generated::*;
 pub use matcher::{MatchResult, Mismatch, match_for, match_instruction, match_prefix};
-pub use mnemonic::{CONDITION_CODES, Mnemonic, Special};
+pub use mnemonic::{CONDITION_CODES, Mnemonic, SVE_CONDITION_ALIASES, Special, is_condition};
 pub use operand::{Check, Imm, Operand, RegisterOperand};
 pub use predicates::{BARRIER_OPTIONS, SVE_PATTERNS, check, prefetch_operations};
 pub use tables::{ClassKind, RegisterKind};
@@ -65,15 +65,36 @@ fn find(head: &str) -> Option<&'static (&'static str, u32, u16)> {
         .map(|i| &MNEMONICS[i])
 }
 
+pub use arm_syntax::Platform;
+
 /// Directive names clang accepts on macOS, sorted, with their leading `.`.
 pub fn directives() -> impl Iterator<Item = &'static str> {
     DIRECTIVES.iter().copied()
 }
 
-/// Whether clang accepts `name` as a directive, ignoring case.
+/// Directive names clang accepts for a platform, sorted.
+pub fn directives_for(platform: Platform) -> impl Iterator<Item = &'static str> {
+    directive_table(platform).iter().copied()
+}
+
+fn directive_table(platform: Platform) -> &'static [&'static str] {
+    match platform {
+        Platform::Darwin => DIRECTIVES,
+        Platform::Linux => ELF_DIRECTIVES,
+    }
+}
+
+/// Whether clang accepts `name` as a directive on macOS, ignoring case.
 pub fn is_directive(name: &str) -> bool {
+    is_directive_for(name, Platform::Darwin)
+}
+
+/// Whether clang accepts `name` as a directive for a platform, ignoring case.
+pub fn is_directive_for(name: &str, platform: Platform) -> bool {
     let name = name.to_ascii_lowercase();
-    DIRECTIVES.binary_search(&name.as_str()).is_ok()
+    directive_table(platform)
+        .binary_search(&name.as_str())
+        .is_ok()
 }
 
 /// Which syntax a form is written in.

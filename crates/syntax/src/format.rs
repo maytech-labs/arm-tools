@@ -3,7 +3,7 @@
 //! can't change what a file assembles to. Lines it can't safely judge (inside
 //! block comments, with `%%`, or with syntax errors) are left as they are.
 
-use crate::{SyntaxKind, lex};
+use crate::{Platform, SyntaxKind, lex_for};
 
 /// Layout settings, set in `armtool.toml` under `[format]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +16,9 @@ pub struct FormatOptions {
     pub comment_column: usize,
     /// Most consecutive blank lines kept.
     pub max_blank_lines: usize,
+    /// Whose conventions the file follows: `;` is a comment on Darwin and a
+    /// separator on Linux.
+    pub platform: Platform,
 }
 
 impl Default for FormatOptions {
@@ -25,6 +28,7 @@ impl Default for FormatOptions {
             mnemonic_width: 8,
             comment_column: 40,
             max_blank_lines: 1,
+            platform: Platform::Darwin,
         }
     }
 }
@@ -35,8 +39,8 @@ type Tokens<'a> = Vec<(SyntaxKind, &'a str)>;
 /// Formats a whole file. The result always ends with one newline, unless the
 /// file is empty.
 pub fn format(text: &str, options: &FormatOptions) -> String {
-    let lexed = lex(text);
-    let errors: Vec<(usize, usize)> = crate::parse(text)
+    let lexed = lex_for(text, options.platform);
+    let errors: Vec<(usize, usize)> = crate::parse_for(text, options.platform)
         .errors()
         .iter()
         .map(|e| (e.range.start, e.range.end))
@@ -102,7 +106,7 @@ pub fn format(text: &str, options: &FormatOptions) -> String {
 
 /// Formats one line with no block comment, separator, or syntax error.
 fn format_line(line: &str, options: &FormatOptions) -> String {
-    let lexed = lex(line);
+    let lexed = lex_for(line, options.platform);
     let mut tokens: Tokens = Vec::new();
     // Whether whitespace came before each token: inside operands, tokens that
     // touched stay touching.

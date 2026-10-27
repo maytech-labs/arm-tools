@@ -22,6 +22,19 @@ pub const CONDITION_CODES: &[&str] = &[
     "al", "nv",
 ];
 
+/// SVE's names for condition codes (`b.none` is `b.eq`). Clang accepts them
+/// wherever a condition goes, with or without SVE, but not run together
+/// with `b` (`bnone`).
+pub const SVE_CONDITION_ALIASES: &[&str] = &[
+    "none", "any", "nlast", "last", "first", "nfrst", "pmore", "plast", "tcont", "tstop",
+];
+
+/// Whether clang accepts `name` as a condition: a code or an SVE alias.
+pub fn is_condition(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    CONDITION_CODES.contains(&lower.as_str()) || SVE_CONDITION_ALIASES.contains(&lower.as_str())
+}
+
 /// An instruction name split the way clang splits it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mnemonic {

@@ -44,7 +44,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Inlay hints in armls: constant values where they're used, and the syscall a `mov x16, #n` sets up.
 - `.S` files go through clang's C preprocessor for diagnostics, mapped back to the lines you wrote.
 - A Homebrew formula (`brew install --HEAD arm-tools` from this repo's tap) and a VS Code extension in `editors/vscode`.
-- Design doc, roadmap, and ADRs 0001 to 0037.
+- Design doc, roadmap, and ADRs 0001 to 0038.
 - `cargo xtask check` and CI on macOS and Linux.
 - `armls` signature help: the forms an instruction's operands so far could begin, with the operand at the cursor.
 - `armls` completion offers what fits the operand: registers of the right width, condition codes, barriers, prefetch operations, shifts and extends, labels (with `@PAGE` and `@PAGEOFF`, and global labels from other files), and constants. Mnemonics show a signature.
@@ -60,3 +60,5 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Operand checking, signature help, and completion for `ubfx`, `bfi`, `bfc` and the other bitfield aliases, `lsl` by an immediate, and `dc`, `ic`, `at`, and `tlbi`.
 - `cargo xtask nvim-smoke` checks completion, signature help, call hierarchy, inlay hints, document links, formatting, and rename across files in real Neovim.
 - Docs: README, design, and examples describe the finished language server.
+- AArch64 Linux: `[target] platform = "linux"` (or a file that looks like Linux) gets ELF conventions: `;` separators, GNU precedence, ELF directives and relocations, the generic CPU, and `.S` preprocessing for Linux. Checked against `clang --target=aarch64-linux-gnu` with `cargo xtask survey --linux`.
+- SVE condition names (`b.none`, `csel ..., any`), labels named like shifts (`bl lsl`), and ELF specifiers on constants are no longer reported.

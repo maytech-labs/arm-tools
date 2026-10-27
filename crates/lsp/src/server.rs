@@ -772,7 +772,8 @@ impl Server<'_> {
                     .map_or(Ok(arm_lint::Config::default()), arm_lint::Config::discover)
                     .map_err(Failure::Refused)?;
                 let text = doc.analysis.text();
-                let formatted = arm_syntax::format(text, &config.format);
+                let formatted =
+                    arm_syntax::format(text, &config.format_for(doc.analysis.platform()));
                 let edits = if formatted == text {
                     Vec::new()
                 } else {

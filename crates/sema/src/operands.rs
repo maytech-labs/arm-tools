@@ -34,6 +34,32 @@ pub(crate) fn flatten(insn: &ast::Instruction, scope: &Scope) -> Option<Flattene
     Some(out)
 }
 
+/// Whether an operand is where `b`, `bl`, `b.cond`, `adr`, or `adrp` takes
+/// its label: the first operand of a branch, the second of adr and adrp.
+/// Clang reads names there as symbols, even `lsl` or `uxtw`. (`cbz x0, uxtw`
+/// stays an error, as it is for clang.)
+fn label_position(node: &SyntaxNode) -> bool {
+    let Some(list) = node
+        .parent()
+        .filter(|p| p.kind() == SyntaxKind::OperandList)
+    else {
+        return false;
+    };
+    let Some(mnemonic) = list
+        .parent()
+        .and_then(|insn| insn.first_token())
+        .map(|t| arm_isa::Mnemonic::parse(t.text()).head)
+    else {
+        return false;
+    };
+    let index = list.children().position(|c| c == *node);
+    match mnemonic.as_str() {
+        "b" | "bl" => index == Some(0),
+        "adr" | "adrp" => index == Some(1),
+        _ => false,
+    }
+}
+
 fn push(out: &mut Flattened, operand: Operand, node: &SyntaxNode) {
     out.operands.push(operand);
     out.ranges.push(node_range(node));
@@ -49,9 +75,11 @@ fn flatten_operand(node: &SyntaxNode, scope: &Scope, out: &mut Flattened) -> Opt
                 return Some(());
             }
             let text = name.text();
-            // A shift or extend without an amount: `[x0, w1, sxtw]`.
+            // A shift or extend without an amount: `[x0, w1, sxtw]`. Where a
+            // branch or adr takes a label, it's a symbol named that way
+            // (`bl lsl`), as clang parses it.
             let lower = text.to_ascii_lowercase();
-            if SHIFT_EXTENDS.contains(&lower.as_str()) {
+            if SHIFT_EXTENDS.contains(&lower.as_str()) && !label_position(node) {
                 let operand = Operand::ShiftExtend {
                     kind: lower,
                     amount: None,
@@ -429,7 +457,8 @@ pub(crate) fn eval(node: &SyntaxNode, scope: &Scope) -> Value {
                 .filter_map(|e| e.into_token())
                 .find(|t| t.kind() == SyntaxKind::Ident)
                 .map(|t| t.text().to_ascii_lowercase());
-            match node.first_child().map(|n| eval(&n, scope)) {
+            let inner = node.first_child();
+            match inner.as_ref().map(|n| eval(n, scope)) {
                 Some(Value::Symbol {
                     name,
                     variant,
@@ -440,6 +469,20 @@ pub(crate) fn eval(node: &SyntaxNode, scope: &Scope) -> Value {
                     variant,
                     specifier,
                     addend,
+                },
+                // `#:abs_g0:limit` with `limit` a known constant is still a
+                // relocation of the symbol, as clang reads it.
+                Some(Value::Int(_)) => match inner.and_then(ast::NameRef::cast) {
+                    Some(name_ref) => Value::Symbol {
+                        name: name_ref
+                            .name()
+                            .map(|n| n.text().to_string())
+                            .unwrap_or_default(),
+                        variant: None,
+                        specifier,
+                        addend: 0,
+                    },
+                    None => Value::Unknown,
                 },
                 _ => Value::Unknown,
             }

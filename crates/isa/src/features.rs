@@ -28,6 +28,20 @@ impl FeatureSet {
         set
     }
 
+    /// What `clang --target=aarch64-linux-gnu` enables: the generic CPU,
+    /// Armv8-A with FP and NEON.
+    pub fn linux_default() -> FeatureSet {
+        FeatureSet::for_cpu("generic").unwrap_or_else(|_| FeatureSet::empty())
+    }
+
+    /// What clang enables by default for a platform.
+    pub fn default_for(platform: crate::Platform) -> FeatureSet {
+        match platform {
+            crate::Platform::Darwin => FeatureSet::apple_default(),
+            crate::Platform::Linux => FeatureSet::linux_default(),
+        }
+    }
+
     /// The features `.arch` or `-march` selects: `armv8.5-a`,
     /// `armv9-a+sve2+nolse`. Like clang, this replaces the current set.
     pub fn for_arch(spec: &str) -> Result<FeatureSet, String> {
@@ -245,5 +259,29 @@ mod tests {
         assert!(m1.has("lse") && !m1.has("sme"));
         assert!(FeatureSet::for_arch("armv99-a").is_err());
         assert!(FeatureSet::for_cpu("pentium").is_err());
+    }
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+
+    /// Checked against `clang --target=aarch64-linux-gnu`: these need
+    /// features the generic CPU doesn't have, unlike apple-m1.
+    #[test]
+    fn linux_starts_from_the_generic_cpu() {
+        let linux = FeatureSet::linux_default();
+        assert!(linux.has("neon") && linux.has("fp-armv8"));
+        for missing in ["lse", "crc", "aes", "dotprod", "rcpc", "fullfp16", "sha2"] {
+            assert!(!linux.has(missing), "{missing}");
+            assert!(
+                FeatureSet::apple_default().has(missing),
+                "{missing} on apple-m1"
+            );
+        }
+        assert_eq!(
+            FeatureSet::default_for(crate::Platform::Darwin),
+            FeatureSet::apple_default()
+        );
     }
 }

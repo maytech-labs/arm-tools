@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 
-use crate::SyntaxKind;
+use crate::{Platform, SyntaxKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
@@ -41,12 +41,21 @@ impl Lexed {
     }
 }
 
-/// Splits `text` into tokens. Never fails; see the module docs.
+/// Splits `text` into tokens with Apple's conventions. Never fails; see the
+/// module docs.
 pub fn lex(text: &str) -> Lexed {
+    lex_for(text, Platform::Darwin)
+}
+
+/// Splits `text` into tokens with a platform's conventions: on Linux, `;`
+/// separates statements instead of starting a comment, and `%%` isn't a
+/// separator.
+pub fn lex_for(text: &str, platform: Platform) -> Lexed {
     let mut lexer = Lexer {
         text,
         pos: 0,
         line_start: true,
+        platform,
         out: Lexed::default(),
     };
     while lexer.pos < text.len() {
@@ -61,6 +70,7 @@ struct Lexer<'a> {
     /// True when only whitespace has been seen since the last newline, where
     /// `#` starts a comment instead of an immediate.
     line_start: bool,
+    platform: Platform,
     out: Lexed,
 }
 
@@ -97,11 +107,12 @@ impl Lexer<'_> {
                 self.eat_while(|c| matches!(c, ' ' | '\t' | '\x0b' | '\x0c'));
                 Whitespace
             }
+            ';' if self.platform == Platform::Linux => Separator,
             ';' => self.line_comment(),
             '/' if next == Some('/') => self.line_comment(),
             '/' if next == Some('*') => self.block_comment(start),
             '#' if self.line_start => self.line_comment(),
-            '%' if next == Some('%') => {
+            '%' if next == Some('%') && self.platform == Platform::Darwin => {
                 self.bump();
                 Separator
             }

@@ -7,7 +7,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use arm_isa::{CONDITION_CODES, FeatureSet, Mnemonic};
+use arm_isa::{CONDITION_CODES, FeatureSet, Mnemonic, Platform};
 use arm_syntax::ast::{self, Statement};
 use arm_syntax::{NodeOrToken, Parse, SyntaxKind, SyntaxNode, SyntaxToken};
 
@@ -126,6 +126,7 @@ pub struct Analysis {
     /// Register aliases in scope at the end of the file.
     aliases: HashMap<String, String>,
     includes: Vec<(Range<usize>, PathBuf)>,
+    platform: Platform,
     /// This file's symbols (not included ones), by where they start, and
     /// the longest one: for lookups by offset.
     local_symbols: Vec<usize>,
@@ -153,16 +154,42 @@ impl Analysis {
         )
     }
 
-    /// The general form: an optional resolver for `.include`, and the CPU
-    /// features enabled at the top of the file, as `-mcpu` or `-march` would
-    /// set them. `None` turns feature checks off.
+    /// Analyzes a file on its own for a platform, with clang's default CPU
+    /// features there.
+    pub fn for_platform(text: &str, platform: Platform) -> Analysis {
+        let features = Some(FeatureSet::default_for(platform));
+        Analysis::with_platform(text, None, None, features, platform)
+    }
+
+    /// Like [`Analysis::with_platform`], for Darwin.
     pub fn with_options(
         text: &str,
         path: Option<PathBuf>,
         resolver: Option<&dyn Resolver>,
         features: Option<FeatureSet>,
     ) -> Analysis {
-        Analysis::build(text, resolver, path.into_iter().collect(), features, None)
+        Analysis::with_platform(text, path, resolver, features, Platform::Darwin)
+    }
+
+    /// The general form: an optional resolver for `.include`, the CPU
+    /// features enabled at the top of the file, as `-mcpu` or `-march` would
+    /// set them (`None` turns feature checks off), and the platform whose
+    /// conventions the file follows (docs/decisions/0038-linux.md).
+    pub fn with_platform(
+        text: &str,
+        path: Option<PathBuf>,
+        resolver: Option<&dyn Resolver>,
+        features: Option<FeatureSet>,
+        platform: Platform,
+    ) -> Analysis {
+        Analysis::build(
+            text,
+            resolver,
+            path.into_iter().collect(),
+            features,
+            None,
+            platform,
+        )
     }
 
     fn build(
@@ -171,11 +198,13 @@ impl Analysis {
         stack: Vec<PathBuf>,
         features: Option<FeatureSet>,
         seed: Option<Seed>,
+        platform: Platform,
     ) -> Analysis {
-        let parse = arm_syntax::parse(text);
+        let parse = arm_syntax::parse_for(text, platform);
         let seed = seed.unwrap_or_default();
         let mut builder = Builder {
             text,
+            platform,
             macro_defs: seed.macro_defs,
             depth: seed.depth,
             counter: 0,
@@ -209,6 +238,7 @@ impl Analysis {
         for statement in parse.tree().statements() {
             builder.statement(&statement);
         }
+        builder.check_relocations(&parse.syntax());
         builder.close_blocks();
         let references = builder.resolve();
         let mut diagnostics = std::mem::take(&mut builder.diagnostics);
@@ -236,6 +266,7 @@ impl Analysis {
             constants: builder.constants,
             aliases: builder.aliases,
             includes: builder.includes,
+            platform,
             local_symbols: Vec::new(),
             longest_symbol: 0,
             longest_reference: 0,
@@ -350,6 +381,11 @@ impl Analysis {
         (definitions == 1)
             .then(|| self.constants.get(name).copied())
             .flatten()
+    }
+
+    /// Whose conventions the file was analyzed with.
+    pub fn platform(&self) -> Platform {
+        self.platform
     }
 
     /// The files this one `.include`s that were found: the range of each
@@ -479,6 +515,7 @@ const MAX_EXPANSION_DEPTH: usize = 8;
 
 struct Builder<'r> {
     text: &'r str,
+    platform: Platform,
     /// Macros defined so far, with their bodies.
     macro_defs: HashMap<String, MacroDef>,
     /// How many expansions deep this analysis is.
@@ -536,7 +573,7 @@ impl Builder<'_> {
                     .name()
                     .map(|n| n.text().to_ascii_lowercase())
                     .unwrap_or_default();
-                if name.starts_with(".if") && arm_isa::is_directive(&name) {
+                if name.starts_with(".if") && arm_isa::is_directive_for(&name, self.platform) {
                     if let Some(token) = directive.name() {
                         self.open(BlockKind::Conditional, &name, &token);
                         if let Some(block) = self.blocks.last_mut() {
@@ -773,7 +810,7 @@ impl Builder<'_> {
             }
             _ => {}
         }
-        if name.starts_with(".if") && arm_isa::is_directive(&name) {
+        if name.starts_with(".if") && arm_isa::is_directive_for(&name, self.platform) {
             self.collect_refs(directive.syntax());
             // Inside a macro body, conditions depend on the arguments.
             let branch = if in_body {
@@ -789,16 +826,31 @@ impl Builder<'_> {
             }
             return;
         }
-        if !in_body && !arm_isa::is_directive(&name) {
+        if !in_body && !arm_isa::is_directive_for(&name, self.platform) {
             let mut message = format!("unknown directive '{}'", name_token.text());
             let mut fix = None;
-            if ELF_ONLY.contains(&name.as_str()) {
-                message.push_str(": it's ELF only, and macOS uses Mach-O. Remove it");
+            let other = match self.platform {
+                Platform::Darwin => Platform::Linux,
+                Platform::Linux => Platform::Darwin,
+            };
+            let elsewhere = match self.platform {
+                Platform::Darwin => ELF_ONLY.contains(&name.as_str()),
+                Platform::Linux => arm_isa::is_directive_for(&name, other),
+            };
+            if elsewhere {
+                message.push_str(match self.platform {
+                    Platform::Darwin => {
+                        ": it's ELF only, and macOS uses Mach-O. Remove it, or set platform = \"linux\" under [target] in armtool.toml if this file is for Linux"
+                    }
+                    Platform::Linux => {
+                        ": it's Mach-O only, for macOS. Remove it, or set platform = \"darwin\" under [target] in armtool.toml if this file is for macOS"
+                    }
+                });
                 fix = Some(crate::Fix {
                     title: format!("Remove the {name} line"),
                     edits: vec![(node_range(directive.syntax()), String::new())],
                 });
-            } else if let Some(better) = suggest(&name, arm_isa::directives()) {
+            } else if let Some(better) = suggest(&name, arm_isa::directives_for(self.platform)) {
                 message.push_str(&format!(": did you mean '{better}'?"));
                 fix = Some(crate::Fix {
                     title: format!("Change to '{better}'"),
@@ -871,7 +923,7 @@ impl Builder<'_> {
                     }
                 }
             }
-            ".globl" | ".global" | ".private_extern" => {
+            ".globl" | ".global" | ".private_extern" | ".weak" => {
                 for arg in &args {
                     if let Some(n) = ast::NameRef::cast(arg.clone()).and_then(|n| n.name()) {
                         let exported = unquote(n.text());
@@ -949,7 +1001,14 @@ impl Builder<'_> {
         }
         let mut stack = self.stack.clone();
         stack.push(path.clone());
-        let included = Analysis::build(&text, self.resolver, stack, self.features.clone(), None);
+        let included = Analysis::build(
+            &text,
+            self.resolver,
+            stack,
+            self.features.clone(),
+            None,
+            self.platform,
+        );
         let origin = Arc::new(Origin { path, text });
         for symbol in included.symbols {
             let importable = match symbol.kind {
@@ -1077,6 +1136,76 @@ impl Builder<'_> {
         Some(flat)
     }
 
+    /// Relocation syntax from the other platform: Mach-O's `@PAGE` family on
+    /// Linux, and ELF's `:lo12:` family on Darwin. Clang rejects both.
+    fn check_relocations(&mut self, root: &SyntaxNode) {
+        const MACH_O: &[&str] = &[
+            "page",
+            "pageoff",
+            "gotpage",
+            "gotpageoff",
+            "tlvppage",
+            "tlvppageoff",
+        ];
+        for node in root.descendants() {
+            match (node.kind(), self.platform) {
+                (SyntaxKind::Variant, Platform::Linux) => {
+                    let text = node.text().to_string();
+                    let variant = text.trim_start_matches('@').to_ascii_lowercase();
+                    if !MACH_O.contains(&variant.as_str()) {
+                        continue;
+                    }
+                    let instead = if variant.ends_with("pageoff") {
+                        "`:lo12:sym` (or `:got_lo12:sym` for the GOT)"
+                    } else {
+                        "`adrp x0, sym` (or `:got:sym` for the GOT)"
+                    };
+                    self.diagnostics.push(Diagnostic::error(
+                        node_range(&node),
+                        "wrong-platform",
+                        format!("'{text}' is Mach-O syntax, for macOS; on Linux write {instead}"),
+                    ));
+                }
+                (SyntaxKind::Specifier, Platform::Darwin) => {
+                    // An absolute constant resolves without a relocation:
+                    // `#:abs_g0:limit` assembles on Darwin too.
+                    let named = node
+                        .children()
+                        .find_map(ast::NameRef::cast)
+                        .and_then(|n| n.name())
+                        .map(|n| n.text().to_string());
+                    let constant = named.is_some_and(|name| {
+                        self.symbols
+                            .iter()
+                            .any(|s| s.kind == SymbolKind::Constant && s.name == name)
+                    });
+                    if constant {
+                        continue;
+                    }
+                    let text = node.text().to_string();
+                    let specifier = text.split(':').nth(1).unwrap_or("").to_ascii_lowercase();
+                    let instead = match specifier.as_str() {
+                        "got" => "`sym@GOTPAGE`",
+                        "got_lo12" => "`sym@GOTPAGEOFF`",
+                        _ => "`sym@PAGE` for adrp and `sym@PAGEOFF` for the low 12 bits",
+                    };
+                    let name_end = node
+                        .children()
+                        .next()
+                        .map_or(node_range(&node).end, |n| node_range(&n).start);
+                    self.diagnostics.push(Diagnostic::error(
+                        node_range(&node).start..name_end,
+                        "wrong-platform",
+                        format!(
+                            "':{specifier}:' is ELF syntax, for Linux; on macOS write {instead}, or set platform = \"linux\" under [target] in armtool.toml"
+                        ),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Records section switches and data directives as items.
     fn directive_item(&mut self, directive: &ast::Directive) {
         let Some(name) = directive.name() else {
@@ -1084,15 +1213,26 @@ impl Builder<'_> {
         };
         let lower = name.text().to_ascii_lowercase();
         let whole = node_range(directive.syntax());
-        let text_section =
-            |args: &str| args.starts_with("__TEXT,__text") || args.contains("pure_instructions");
+        let platform = self.platform;
+        // Mach-O's `__TEXT,__text`; ELF's `.text*` or a section flagged `x`.
+        let text_section = |args: &str| match platform {
+            Platform::Darwin => {
+                args.starts_with("__TEXT,__text") || args.contains("pure_instructions")
+            }
+            Platform::Linux => {
+                let mut parts = args.split(',');
+                let name = parts.next().unwrap_or("").trim_matches('"');
+                let flags = parts.next().unwrap_or("").trim_matches('"');
+                name == ".text" || name.starts_with(".text.") || flags.contains('x')
+            }
+        };
         match lower.as_str() {
             ".text" => self.items.push(Item::Section {
                 range: whole,
                 text: true,
             }),
             ".data" | ".bss" | ".const" | ".const_data" | ".cstring" | ".literal4"
-            | ".literal8" | ".literal16" | ".tdata" | ".tbss" | ".static_data" => {
+            | ".literal8" | ".literal16" | ".tdata" | ".tbss" | ".static_data" | ".rodata" => {
                 self.items.push(Item::Section {
                     range: whole,
                     text: false,
@@ -1125,7 +1265,7 @@ impl Builder<'_> {
         let text = token.text();
         let mnemonic = Mnemonic::parse(text);
         if let Some(condition) = &mnemonic.condition {
-            if CONDITION_CODES.contains(&condition.as_str()) {
+            if arm_isa::is_condition(condition) {
                 return true;
             }
             let mut message = format!("invalid condition code '{condition}'");
@@ -1259,7 +1399,14 @@ impl Builder<'_> {
             macro_defs: self.macro_defs.clone(),
             depth: self.depth + 1,
         };
-        let expanded = Analysis::build(text, None, Vec::new(), self.features.clone(), Some(seed));
+        let expanded = Analysis::build(
+            text,
+            None,
+            Vec::new(),
+            self.features.clone(),
+            Some(seed),
+            self.platform,
+        );
         for d in expanded.diagnostics {
             let diagnostic = Diagnostic {
                 range: at.clone(),

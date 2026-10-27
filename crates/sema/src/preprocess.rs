@@ -6,6 +6,8 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use arm_isa::Platform;
+
 use crate::{Diagnostic, Encoding, LineIndex};
 
 /// The preprocessor's output, and where each of its lines came from.
@@ -29,13 +31,46 @@ pub fn preprocess(
     file: &Path,
     include_dirs: &[PathBuf],
 ) -> Result<Preprocessed, String> {
+    preprocess_for(text, file, include_dirs, Platform::Darwin)
+}
+
+/// The preprocessor command for a platform: clang for that target, so
+/// `__APPLE__` or `__linux__` is defined as it is in the build. On macOS
+/// it's Apple's clang through `xcrun`; elsewhere `clang`, else `cc`.
+fn preprocessor(platform: Platform) -> Command {
+    let target: &[&str] = match platform {
+        Platform::Darwin => &["-arch", "arm64"],
+        Platform::Linux => &["--target=aarch64-linux-gnu"],
+    };
+    let mut command = if cfg!(target_os = "macos") {
+        let mut c = Command::new("xcrun");
+        c.arg("clang").args(target);
+        c
+    } else if Command::new("clang").arg("--version").output().is_ok() {
+        let mut c = Command::new("clang");
+        c.args(target);
+        c
+    } else {
+        // GCC on an AArch64 Linux machine: its own target already.
+        Command::new("cc")
+    };
+    command.args(["-E", "-x", "assembler-with-cpp"]);
+    command
+}
+
+/// Like [`preprocess`], for a platform.
+pub fn preprocess_for(
+    text: &str,
+    file: &Path,
+    include_dirs: &[PathBuf],
+    platform: Platform,
+) -> Result<Preprocessed, String> {
     let dir = file
         .parent()
         .filter(|d| d.is_dir())
         .unwrap_or(Path::new("."));
-    let mut command = Command::new("xcrun");
+    let mut command = preprocessor(platform);
     command
-        .args(["clang", "-E", "-x", "assembler-with-cpp", "-arch", "arm64"])
         .current_dir(dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -46,7 +81,7 @@ pub fn preprocess(
     command.arg("-");
     let mut child = command
         .spawn()
-        .map_err(|e| format!("can't run the C preprocessor (xcrun clang): {e}"))?;
+        .map_err(|e| format!("can't run the C preprocessor (clang): {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin
             .write_all(text.as_bytes())
@@ -176,6 +211,30 @@ mod tests {
         let d = Diagnostic::error(at..at + 5, "invalid-operand", "range");
         let mapped = p.map_diagnostics(original, vec![d]);
         assert_eq!(&original[mapped[0].range.clone()], "#5000");
+    }
+
+    #[test]
+    fn oracle_defines_the_platform_macros() {
+        if !cfg!(target_os = "macos") {
+            return eprintln!("skipped: needs xcrun clang");
+        }
+        // Not `linux` itself: clang predefines it as 1 for that target.
+        let text = "#ifdef __linux__\nfor_linux\n#endif\n#ifdef __APPLE__\nfor_apple\n#endif\n";
+        let at = |platform| {
+            preprocess_for(text, Path::new("/tmp/a.S"), &[], platform)
+                .expect("clang -E")
+                .text
+        };
+        let linux = at(Platform::Linux);
+        assert!(
+            linux.contains("for_linux") && !linux.contains("for_apple"),
+            "{linux}"
+        );
+        let darwin = at(Platform::Darwin);
+        assert!(
+            darwin.contains("for_apple") && !darwin.contains("for_linux"),
+            "{darwin}"
+        );
     }
 
     #[test]

@@ -268,7 +268,7 @@ fn fmt(args: &[String]) -> ExitCode {
                 return ExitCode::from(2);
             }
         };
-        let formatted = arm_syntax::format(&text, &config.format);
+        let formatted = arm_syntax::format(&text, &config.format_for(config.platform_for(&text)));
         if formatted == text {
             continue;
         }
