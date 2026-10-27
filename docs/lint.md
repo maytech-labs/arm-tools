@@ -52,7 +52,7 @@ Silence one finding with a comment on its line, or on the line above:
 
 Uses x18, which Darwin reserves for the platform
 
-Apple's arm64 ABI reserves x18 for the OS. The kernel may change it at any time, such as on a context switch, so a value kept there can vanish. Use another scratch register, like x9 to x15.
+Apple's arm64 ABI reserves x18 for the OS. The kernel may change it at any time, such as on a context switch, so a value kept there can vanish. Use another scratch register, like x9 to x15. Darwin only: Linux leaves x18 to programs.
 
 Default level: warning.
 
@@ -68,7 +68,7 @@ Default level: warning.
 
 A function that calls others doesn't set up x29
 
-Darwin requires a valid chain of frame records for backtraces, profilers, and crash reports. A function that calls others should start with `stp x29, x30, [sp, #-16]!` and `mov x29, sp`.
+Darwin requires a valid chain of frame records for backtraces, profilers, and crash reports. A function that calls others should start with `stp x29, x30, [sp, #-16]!` and `mov x29, sp`. Darwin only: on Linux a frame pointer is optional.
 
 Default level: warning.
 
@@ -92,15 +92,15 @@ Default level: warning.
 
 adrp loads a page that nothing adds the offset to
 
-adrp gives only the 4 KB page of a symbol. The full address needs the offset within the page too: `add x0, x0, _sym@PAGEOFF`, or `ldr x0, [x0, _sym@PAGEOFF]`.
+adrp gives only the 4 KB page of a symbol. The full address needs the offset within the page too: `add x0, x0, _sym@PAGEOFF`, or `ldr x0, [x0, _sym@PAGEOFF]`. On Linux: `add x0, x0, :lo12:sym`.
 
 Default level: warning.
 
 ### `addr/variant-mismatch`
 
-Pairs @PAGE, @GOTPAGE, or @TLVPPAGE with the wrong offset
+Pairs a page relocation with the wrong offset, like @GOTPAGE with @PAGEOFF
 
-Each page variant pairs with one offset variant: @PAGE with @PAGEOFF, @GOTPAGE with @GOTPAGEOFF, and @TLVPPAGE with @TLVPPAGEOFF. Mixing them computes an address in the wrong place.
+Each page variant pairs with one offset variant: @PAGE with @PAGEOFF, @GOTPAGE with @GOTPAGEOFF, and @TLVPPAGE with @TLVPPAGEOFF. On Linux, `adrp x0, sym` pairs with :lo12:, :got: with :got_lo12:, :gottprel: with :gottprel_lo12:, and :tlsdesc: with :tlsdesc_lo12:. Mixing them computes an address in the wrong place.
 
 Default level: warning.
 
@@ -138,9 +138,9 @@ Default level: warning.
 
 ### `abi/syscall-number`
 
-svc without the syscall number in x16
+svc without the syscall number in x16 (Darwin) or x8 (Linux)
 
-On Darwin, svc #0x80 takes the system call number in x16, not x8 as on Linux. Set x16 before the svc, for example mov x16, #4 for write.
+On Darwin, svc #0x80 takes the system call number in x16, not x8 as on Linux. Set x16 before the svc, for example mov x16, #4 for write. On Linux, svc #0 takes it in x8: mov x8, #64 for write.
 
 Default level: warning.
 

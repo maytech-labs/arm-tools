@@ -62,3 +62,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Docs: README, design, and examples describe the finished language server.
 - AArch64 Linux: `[target] platform = "linux"` (or a file that looks like Linux) gets ELF conventions: `;` separators, GNU precedence, ELF directives and relocations, the generic CPU, and `.S` preprocessing for Linux. Checked against `clang --target=aarch64-linux-gnu` with `cargo xtask survey --linux`.
 - SVE condition names (`b.none`, `csel ..., any`), labels named like shifts (`bl lsl`), and ELF specifiers on constants are no longer reported.
+- Lint on Linux: x18 and frame-pointer rules are Darwin only, `adrp` pairs with `:lo12:` and the GOT and TLS specifiers, and `svc #0` takes its number in x8.

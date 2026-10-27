@@ -215,6 +215,14 @@ pub(crate) fn is_terminator(insn: &Instruction) -> bool {
         )
 }
 
+/// Where `svc` takes the system call number: x16 on Darwin, x8 on Linux.
+pub(crate) fn syscall_register(platform: arm_isa::Platform) -> &'static str {
+    match platform {
+        arm_isa::Platform::Darwin => "x16",
+        arm_isa::Platform::Linux => "x8",
+    }
+}
+
 pub(crate) fn is_call(insn: &Instruction) -> bool {
     matches!(
         insn.mnemonic.head.as_str(),
@@ -292,7 +300,7 @@ pub(crate) fn writes(insn: &Instruction) -> Vec<String> {
 /// destinations `writes` counts, plus x16 for `svc` (Darwin's syscall
 /// number) and x30 for `ret`. A destination that's also read, like `movk`'s,
 /// isn't counted: that can only miss a read, never invent one.
-pub(crate) fn reads(insn: &Instruction) -> Vec<String> {
+pub(crate) fn reads(insn: &Instruction, platform: arm_isa::Platform) -> Vec<String> {
     let head = insn.mnemonic.head.as_str();
     let ops = operands(insn);
     let is_store = head.starts_with("st") && !STORE_EXCLUSIVE.contains(&head);
@@ -323,7 +331,7 @@ pub(crate) fn reads(insn: &Instruction) -> Vec<String> {
         out.push(id);
     }
     if head == "svc" {
-        out.push("x16".into());
+        out.push(syscall_register(platform).into());
     }
     if head == "ret" && ops.is_empty() {
         out.push("x30".into());
@@ -479,15 +487,43 @@ mod tests {
 
     #[test]
     fn reads() {
-        assert_eq!(super::reads(&insn("add x0, x9, x10")), ["x9", "x10"]);
-        assert_eq!(super::reads(&insn("str x9, [sp, #8]")), ["x9", "sp"]);
-        assert_eq!(super::reads(&insn("ldr x0, [x9]")), ["x9"]);
-        assert_eq!(super::reads(&insn("ldp x0, x1, [x9], #16")), ["x9"]);
-        assert_eq!(super::reads(&insn("cmp x9, #0")), ["x9"]);
-        assert_eq!(super::reads(&insn("stxr w1, x0, [x2]")), ["x0", "x2"]);
-        assert_eq!(super::reads(&insn("svc #0x80")), ["x16"]);
         assert_eq!(
-            super::reads(&insn("fadd v16.4s, v17.4s, v18.4s")),
+            super::reads(&insn("add x0, x9, x10"), arm_isa::Platform::Darwin),
+            ["x9", "x10"]
+        );
+        assert_eq!(
+            super::reads(&insn("str x9, [sp, #8]"), arm_isa::Platform::Darwin),
+            ["x9", "sp"]
+        );
+        assert_eq!(
+            super::reads(&insn("ldr x0, [x9]"), arm_isa::Platform::Darwin),
+            ["x9"]
+        );
+        assert_eq!(
+            super::reads(&insn("ldp x0, x1, [x9], #16"), arm_isa::Platform::Darwin),
+            ["x9"]
+        );
+        assert_eq!(
+            super::reads(&insn("cmp x9, #0"), arm_isa::Platform::Darwin),
+            ["x9"]
+        );
+        assert_eq!(
+            super::reads(&insn("stxr w1, x0, [x2]"), arm_isa::Platform::Darwin),
+            ["x0", "x2"]
+        );
+        assert_eq!(
+            super::reads(&insn("svc #0x80"), arm_isa::Platform::Darwin),
+            ["x16"]
+        );
+        assert_eq!(
+            super::reads(&insn("svc #0"), arm_isa::Platform::Linux),
+            ["x8"]
+        );
+        assert_eq!(
+            super::reads(
+                &insn("fadd v16.4s, v17.4s, v18.4s"),
+                arm_isa::Platform::Darwin
+            ),
             ["v17", "v18"]
         );
     }
