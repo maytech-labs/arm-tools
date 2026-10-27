@@ -4,7 +4,7 @@
 
 CC     ?= clang
 BUILD  := build
-PROGS  := hello sum fib neon macros preprocessor
+PROGS  := hello sum fib neon macros preprocessor linked
 
 .PHONY: all run clean $(PROGS)
 
@@ -16,6 +16,7 @@ fib: $(BUILD)/fib
 neon: $(BUILD)/neon
 macros: $(BUILD)/macros
 preprocessor: $(BUILD)/preprocessor
+linked: $(BUILD)/linked
 
 $(BUILD):
 	mkdir -p $@
@@ -38,6 +39,10 @@ $(BUILD)/macros: macros/main.s macros/syscalls.s | $(BUILD)
 
 $(BUILD)/preprocessor: preprocessor/strlen.S preprocessor/config.h | $(BUILD)
 	$(CC) -arch arm64 -o $@ $<
+
+# Two files, assembled separately and linked into one program.
+$(BUILD)/linked: linked/main.s linked/text.s | $(BUILD)
+	$(CC) -arch arm64 -o $@ linked/main.s linked/text.s
 
 run: all
 	@for p in $(PROGS); do echo "== $$p"; $(BUILD)/$$p || exit 1; done

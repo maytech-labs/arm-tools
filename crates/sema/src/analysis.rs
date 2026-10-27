@@ -39,7 +39,8 @@ pub struct Symbol {
     pub range: Range<usize>,
     /// The whole defining statement.
     pub statement: Range<usize>,
-    /// Named by `.globl` or `.global`.
+    /// Named by `.globl`, `.global`, or `.private_extern`: other object files
+    /// can link to it.
     pub exported: bool,
     /// For register aliases: where `.unreq` ends it.
     pub scope_end: Option<usize>,
@@ -757,7 +758,7 @@ impl Builder<'_> {
                     }
                 }
             }
-            ".globl" | ".global" => {
+            ".globl" | ".global" | ".private_extern" => {
                 for arg in &args {
                     if let Some(n) = ast::NameRef::cast(arg.clone()).and_then(|n| n.name()) {
                         let exported = unquote(n.text());

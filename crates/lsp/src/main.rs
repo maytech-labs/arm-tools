@@ -3,6 +3,7 @@
 
 mod ide;
 mod server;
+mod workspace;
 
 use std::process::ExitCode;
 

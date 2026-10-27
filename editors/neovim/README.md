@@ -10,7 +10,8 @@ What you get, with the default keymaps of Neovim 0.11:
 |---|---|
 | Errors as you type | Shown inline; `]d` and `[d` move between them |
 | Hover: instruction forms, register roles, symbol definitions | `K` |
-| Go to definition | `Ctrl-]` or `gd` if you map it |
+| Go to definition, also into other files of the project | `Ctrl-]` or `gd` if you map it |
+| Search global labels across the project | `:lua vim.lsp.buf.workspace_symbol()` |
 | References | `grr` |
 | Rename | `grn` |
 | Outline | `gO` |

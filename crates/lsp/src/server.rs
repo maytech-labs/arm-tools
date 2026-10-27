@@ -42,6 +42,7 @@ pub fn run(connection: &Connection) -> Result<bool> {
     let (id, params) = connection.initialize_start()?;
     let params: InitializeParams = serde_json::from_value(params)?;
     let encoding = negotiate_encoding(&params);
+    let roots = workspace_roots(&params);
     let result = serde_json::json!({
         "capabilities": capabilities(encoding),
         "serverInfo": ServerInfo {
@@ -55,6 +56,7 @@ pub fn run(connection: &Connection) -> Result<bool> {
         connection,
         encoding,
         documents: HashMap::new(),
+        index: crate::workspace::Index::scan(&roots),
     };
     for message in &connection.receiver {
         match message {
@@ -74,6 +76,22 @@ pub fn run(connection: &Connection) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// The project directories to index: the client's workspace folders, or
+/// its root.
+fn workspace_roots(params: &InitializeParams) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = params
+        .workspace_folders
+        .iter()
+        .flatten()
+        .filter_map(|f| file_path(&f.uri))
+        .collect();
+    #[allow(deprecated)] // Older clients only send root_uri.
+    if roots.is_empty() {
+        roots.extend(params.root_uri.as_ref().and_then(file_path));
+    }
+    roots.into_iter().map(|p| arm_sema::normalize(&p)).collect()
 }
 
 /// UTF-8 when the client offers it, else UTF-16, which every client supports.
@@ -96,7 +114,15 @@ fn capabilities(encoding: Encoding) -> ServerCapabilities {
             Encoding::Utf8 => PositionEncodingKind::UTF8,
             Encoding::Utf16 => PositionEncodingKind::UTF16,
         }),
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            lsp_types::TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                save: Some(lsp_types::TextDocumentSyncSaveOptions::Supported(true)),
+                ..lsp_types::TextDocumentSyncOptions::default()
+            },
+        )),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".into()]),
@@ -161,6 +187,8 @@ struct Server<'c> {
     connection: &'c Connection,
     encoding: Encoding,
     documents: HashMap<Uri, Document>,
+    /// The project's global labels and references, across files.
+    index: crate::workspace::Index,
 }
 
 impl Server<'_> {
@@ -184,7 +212,30 @@ impl Server<'_> {
                 let params: lsp_types::DidCloseTextDocumentParams =
                     serde_json::from_value(notification.params)?;
                 self.documents.remove(&params.text_document.uri);
+                // The buffer may have had unsaved edits: index what's on disk.
+                if let Some(path) = file_path(&params.text_document.uri) {
+                    self.index.reload(&arm_sema::normalize(&path));
+                }
                 self.publish(params.text_document.uri, Vec::new())?;
+            }
+            "textDocument/didSave" => {
+                let params: lsp_types::DidSaveTextDocumentParams =
+                    serde_json::from_value(notification.params)?;
+                if !self.documents.contains_key(&params.text_document.uri)
+                    && let Some(path) = file_path(&params.text_document.uri)
+                {
+                    self.index.reload(&arm_sema::normalize(&path));
+                }
+            }
+            "workspace/didChangeWatchedFiles" => {
+                let params: lsp_types::DidChangeWatchedFilesParams =
+                    serde_json::from_value(notification.params)?;
+                for change in params.changes {
+                    let open = self.documents.contains_key(&change.uri);
+                    if let (false, Some(path)) = (open, file_path(&change.uri)) {
+                        self.index.reload(&arm_sema::normalize(&path));
+                    }
+                }
             }
             _ => {}
         }
@@ -234,6 +285,9 @@ impl Server<'_> {
             Ok(config) => (config, true, None),
             Err(error) => (arm_lint::Config::default(), false, Some(error)),
         };
+        if let Some(path) = &path {
+            self.index.update(path, text);
+        }
         let checked = arm_lint::check(text, path.as_deref(), &config, open, lint);
         let analysis = checked.analysis;
         let mut found = checked.diagnostics;
@@ -322,7 +376,9 @@ impl Server<'_> {
                 let params: HoverParams = params(request)?;
                 let at = &params.text_document_position_params;
                 let result = self.at(at).and_then(|(doc, offset)| {
-                    let hover = ide::hover(&doc.analysis, offset)?;
+                    let Some(hover) = ide::hover(&doc.analysis, offset) else {
+                        return self.global_hover(&doc.analysis, offset, &at.text_document.uri);
+                    };
                     Some(lsp_types::Hover {
                         contents: HoverContents::Markup(MarkupContent {
                             kind: MarkupKind::Markdown,
@@ -350,7 +406,19 @@ impl Server<'_> {
                 let params: GotoDefinitionParams = params(request)?;
                 let at = &params.text_document_position_params;
                 let result = self.at(at).and_then(|(doc, offset)| {
-                    let definition = ide::definition(&doc.analysis, offset)?;
+                    let Some(definition) = ide::definition(&doc.analysis, offset) else {
+                        // Defined in another file of the project?
+                        let places =
+                            self.global_definitions(&doc.analysis, offset, &at.text_document.uri);
+                        return match places.len() {
+                            0 => None,
+                            1 => places
+                                .into_iter()
+                                .next()
+                                .map(GotoDefinitionResponse::Scalar),
+                            _ => Some(GotoDefinitionResponse::Array(places)),
+                        };
+                    };
                     let location = match &definition.origin {
                         None => Location {
                             uri: at.text_document.uri.clone(),
@@ -370,13 +438,25 @@ impl Server<'_> {
                 let at = &params.text_document_position;
                 let result = self.at(at).map(|(doc, offset)| {
                     let include = params.context.include_declaration;
-                    ide::references(&doc.analysis, offset, include)
-                        .into_iter()
-                        .map(|range| Location {
-                            uri: at.text_document.uri.clone(),
-                            range: self.range(&doc.analysis, range),
-                        })
-                        .collect::<Vec<_>>()
+                    let mut locations: Vec<Location> =
+                        ide::references(&doc.analysis, offset, include)
+                            .into_iter()
+                            .map(|range| Location {
+                                uri: at.text_document.uri.clone(),
+                                range: self.range(&doc.analysis, range),
+                            })
+                            .collect();
+                    // A global label's uses in the rest of the project.
+                    if let Some(name) = self.global_name(&doc.analysis, offset) {
+                        let here =
+                            file_path(&at.text_document.uri).map(|p| arm_sema::normalize(&p));
+                        let mut places = self.index.references(&name, here.as_deref());
+                        if include {
+                            places.extend(self.index.definitions(&name, here.as_deref()));
+                        }
+                        locations.extend(places.into_iter().filter_map(|p| self.location(&p)));
+                    }
+                    locations
                 });
                 Ok(ok(id, result))
             }
@@ -549,8 +629,105 @@ impl Server<'_> {
                 });
                 Ok(ok(id, result))
             }
+            "workspace/symbol" => {
+                let params: lsp_types::WorkspaceSymbolParams = params(request)?;
+                #[allow(deprecated)] // `SymbolInformation::deprecated` must still be set.
+                let symbols: Vec<lsp_types::SymbolInformation> = self
+                    .index
+                    .search(&params.query)
+                    .into_iter()
+                    .filter_map(|(name, place)| {
+                        Some(lsp_types::SymbolInformation {
+                            name,
+                            kind: LspSymbolKind::FUNCTION,
+                            tags: None,
+                            deprecated: None,
+                            location: self.location(&place)?,
+                            container_name: place
+                                .path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned()),
+                        })
+                    })
+                    .collect();
+                Ok(ok(id, Some(symbols)))
+            }
             method => Err(Failure::MethodNotFound(method.to_string())),
         }
+    }
+
+    /// The name at `offset` if it can link across files: a use of a name this
+    /// file doesn't define, or one of this file's global labels.
+    fn global_name(&self, analysis: &Analysis, offset: usize) -> Option<String> {
+        if let Some(symbol) = analysis.symbol_at(offset) {
+            let symbol = &analysis.symbols()[symbol];
+            return (symbol.kind == SymbolKind::Label
+                && symbol.exported
+                && symbol.origin.is_none())
+            .then(|| symbol.name.clone());
+        }
+        let reference = analysis.reference_at(offset)?;
+        reference.symbol.is_none().then(|| reference.name.clone())
+    }
+
+    /// Where a name this file doesn't define is defined elsewhere in the project.
+    fn global_definitions(&self, analysis: &Analysis, offset: usize, uri: &Uri) -> Vec<Location> {
+        let Some(reference) = analysis.reference_at(offset).filter(|r| r.symbol.is_none()) else {
+            return Vec::new();
+        };
+        let here = file_path(uri).map(|p| arm_sema::normalize(&p));
+        self.index
+            .definitions(&reference.name, here.as_deref())
+            .iter()
+            .filter_map(|p| self.location(p))
+            .collect()
+    }
+
+    /// Hover for a global label defined in another file: where, and its line.
+    fn global_hover(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+        uri: &Uri,
+    ) -> Option<lsp_types::Hover> {
+        let reference = analysis
+            .reference_at(offset)
+            .filter(|r| r.symbol.is_none())?;
+        let here = file_path(uri).map(|p| arm_sema::normalize(&p));
+        let place = self
+            .index
+            .definitions(&reference.name, here.as_deref())
+            .into_iter()
+            .next()?;
+        let file = self.index.file(&place.path)?;
+        let text = &file.text;
+        let start = text[..place.range.start].rfind('\n').map_or(0, |i| i + 1);
+        let end = text[start..].find('\n').map_or(text.len(), |i| start + i);
+        let name = place
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Some(lsp_types::Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!(
+                    "**{}** (global label in {name})\n\n```asm\n{}\n```",
+                    reference.name,
+                    text[start..end].trim()
+                ),
+            }),
+            range: Some(self.range(analysis, reference.range.clone())),
+        })
+    }
+
+    /// An LSP location for a place in an indexed file.
+    fn location(&self, place: &crate::workspace::Place) -> Option<Location> {
+        let file = self.index.file(&place.path)?;
+        Some(Location {
+            uri: path_uri(&place.path)?,
+            range: self.range_in(&file.text, place.range.clone()),
+        })
     }
 
     /// The open document and byte offset a position points at.

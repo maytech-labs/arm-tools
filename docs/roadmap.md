@@ -63,6 +63,8 @@ Done when Neovim and VS Code show diagnostics, hover, definition, references, co
 - [x] Diagnostics, hover, definition, references, symbols
 - [x] Completion, semantic tokens
 - [x] Rename, document highlight
+- [x] Navigation between separately assembled files: definition, references, hover, workspace symbols ([0029](decisions/0029-workspace-index.md))
+- [ ] Index C function definitions, for calls from assembly into C
 - [x] Folding ranges and quick-fix code actions ([0021](decisions/0021-quick-fixes.md))
 - [x] Inlay hints: constant values and syscall names ([0028](decisions/0028-inlay-hints.md))
 - [x] `editors/` setup for Neovim and Helix, `make install`, and `cargo xtask nvim-smoke`

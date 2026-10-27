@@ -28,6 +28,11 @@ struct Client {
 impl Client {
     /// Starts armls and completes the handshake. `utf8` offers UTF-8 positions.
     fn start(utf8: bool) -> Client {
+        Client::start_in(utf8, None)
+    }
+
+    /// Like `start`, with a workspace folder for the server to index.
+    fn start_in(utf8: bool, root: Option<&str>) -> Client {
         let mut child = Command::new(env!("CARGO_BIN_EXE_armls"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -58,10 +63,12 @@ impl Client {
         } else {
             json!(["utf-16"])
         };
-        let response = client.request(
-            "initialize",
-            json!({ "capabilities": { "general": { "positionEncodings": encodings } } }),
-        );
+        let mut params =
+            json!({ "capabilities": { "general": { "positionEncodings": encodings } } });
+        if let Some(root) = root {
+            params["workspaceFolders"] = json!([{ "uri": root, "name": "project" }]);
+        }
+        let response = client.request("initialize", params);
         client.initialize = response["result"].clone();
         client.notify("initialized", json!({}));
         client
@@ -241,6 +248,7 @@ fn advertises_capabilities_and_negotiates_encoding() {
         "codeActionProvider",
         "foldingRangeProvider",
         "inlayHintProvider",
+        "workspaceSymbolProvider",
     ] {
         assert!(!caps[capability].is_null(), "missing {capability}");
     }
@@ -530,6 +538,78 @@ fn inlay_hints() {
         .collect();
     assert_eq!(labels, ["= 4095 (0xfff)", "syscall exit"]);
     assert!(client.shutdown().success());
+}
+
+#[test]
+fn navigation_between_linked_files() {
+    let root = std::env::temp_dir().join(format!("armls-workspace-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("lib")).expect("dirs");
+    let main = ".globl _main\n_main:\n    bl _helper\n    ret\n";
+    let util = ".globl _helper\n_helper:\n    mov x0, #1\n    ret\n";
+    std::fs::write(root.join("main.s"), main).expect("write");
+    std::fs::write(root.join("lib/util.s"), util).expect("write");
+    let root_uri = format!("file://{}", root.display());
+    let main_uri = format!("{root_uri}/main.s");
+    let util_uri = format!("{root_uri}/lib/util.s");
+    let mut client = Client::start_in(true, Some(&root_uri));
+    client.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": main_uri, "languageId": "asm", "version": 1, "text": main } }),
+    );
+    let at_call = json!({ "textDocument": { "uri": main_uri }, "position": start(2, 9) });
+
+    // gd on the call jumps to util.s, which isn't even open.
+    let definition = client.request("textDocument/definition", at_call.clone())["result"].clone();
+    assert_eq!(definition["uri"], util_uri.as_str());
+    assert_eq!(definition["range"]["start"], start(1, 0));
+
+    // Hover says where it is.
+    let hover = client.request("textDocument/hover", at_call.clone())["result"].clone();
+    let text = hover["contents"]["value"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("**_helper** (global label in util.s)"),
+        "{text}"
+    );
+
+    // References from the call include the definition and .globl in util.s.
+    let mut params = at_call.clone();
+    params["context"] = json!({ "includeDeclaration": true });
+    let references = client.request("textDocument/references", params)["result"].clone();
+    let uris: Vec<&str> = references
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|l| l["uri"].as_str())
+        .collect();
+    assert_eq!(
+        uris.iter().filter(|u| **u == util_uri).count(),
+        2,
+        "{uris:?}"
+    );
+    assert!(uris.contains(&main_uri.as_str()));
+
+    // Workspace symbol search.
+    let symbols = client.request("workspace/symbol", json!({ "query": "help" }))["result"].clone();
+    assert_eq!(symbols[0]["name"], "_helper");
+    assert_eq!(symbols[0]["location"]["uri"], util_uri.as_str());
+
+    // Renaming the label in an unsaved buffer updates navigation.
+    client.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": util_uri, "languageId": "asm", "version": 1, "text": util } }),
+    );
+    client.notify(
+        "textDocument/didChange",
+        json!({
+            "textDocument": { "uri": util_uri, "version": 2 },
+            "contentChanges": [{ "text": ".globl _other\n_other:\n    ret\n" }],
+        }),
+    );
+    let gone = client.request("textDocument/definition", at_call)["result"].clone();
+    assert!(gone.is_null(), "{gone}");
+    assert!(client.shutdown().success());
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

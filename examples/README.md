@@ -16,6 +16,7 @@ make fib          # or one at a time, into build/
 | [neon](neon/vecadd.s) | NEON: `ld1`, `fadd` on four floats at once, `st1` | Hover `fadd` for its forms; change `.4s` to `.8h` in one operand |
 | [macros](macros/main.s) | `.include`, macros with default arguments, `.irp`, `.rept` | Go to definition on `print` jumps to [syscalls.s](macros/syscalls.s); break the macro body and the error appears at the call |
 | [preprocessor](preprocessor/strlen.S) | A `.S` file: `#include`, `#define`, a function-like macro, `#if` | Errors map back through the preprocessor; set `VERBOSE` to 0 |
+| [linked](linked/main.s) | A program in two files, assembled separately and linked: calls go both ways between them | `gd` on `_print_line` jumps to [text.s](linked/text.s); `grr` lists uses in both files; hover shows where it's defined |
 | [mistakes](mistakes/mistakes.s) | Doesn't build: one of each problem armls catches, labeled | `]d` through them; `gra` on the ones marked quick fix |
 
 Things these examples ran into while being written, which armls now explains:

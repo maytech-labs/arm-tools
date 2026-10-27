@@ -26,7 +26,15 @@ fn armtool(args: &[&str]) -> (Option<i32>, String) {
 
 #[test]
 fn valid_examples_lint_clean() {
-    for dir in ["hello", "sum", "fib", "neon", "macros", "preprocessor"] {
+    for dir in [
+        "hello",
+        "sum",
+        "fib",
+        "neon",
+        "macros",
+        "preprocessor",
+        "linked",
+    ] {
         let (code, out) = armtool(&["lint", dir]);
         assert_eq!(code, Some(0), "{dir}: {out}");
         assert!(out.is_empty(), "{dir} has findings: {out}");
@@ -84,6 +92,8 @@ fn oracle_examples_build_and_run() {
         "48.0",
         "  second, from .irp",
         "Counted with a hand-written strlen",
+        "Counting down, across two files:",
+        "liftoff",
     ] {
         assert!(out.contains(expected), "missing {expected:?} in:\n{out}");
     }

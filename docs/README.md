@@ -37,3 +37,4 @@
 - [0026 Dataflow rules report only what holds on every path](decisions/0026-dataflow-rules.md)
 - [0027 `.S` files: diagnostics from clang's preprocessor output, editing on the text as written](decisions/0027-preprocessed-files.md)
 - [0028 Inlay hints: constant values and syscall names](decisions/0028-inlay-hints.md)
+- [0029 A workspace index for navigation between linked files](decisions/0029-workspace-index.md)
