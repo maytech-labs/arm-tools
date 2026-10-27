@@ -1,0 +1,53 @@
+SourceFile@0..49
+  Instruction@0..12
+    Ident@0..3 "mov"
+    Whitespace@3..4 " "
+    OperandList@4..6
+      NameRef@4..6
+        Ident@4..6 "x0"
+    Whitespace@6..7 " "
+    Error@7..12
+      Ident@7..9 "x1"
+      Whitespace@9..10 " "
+      Ident@10..12 "x2"
+  Newline@12..13 "\n"
+  Instruction@13..28
+    Ident@13..16 "ldr"
+    Whitespace@16..17 " "
+    OperandList@17..28
+      NameRef@17..19
+        Ident@17..19 "x0"
+      Comma@19..20 ","
+      Whitespace@20..21 " "
+      Memory@21..28
+        LBracket@21..22 "["
+        NameRef@22..24
+          Ident@22..24 "x1"
+        Whitespace@24..25 " "
+        Error@25..27
+          Ident@25..27 "x2"
+        RBracket@27..28 "]"
+  Newline@28..29 "\n"
+  Instruction@29..38
+    Ident@29..32 "mov"
+    Whitespace@32..33 " "
+    OperandList@33..38
+      NameRef@33..35
+        Ident@33..35 "x0"
+      Comma@35..36 ","
+      Whitespace@36..37 " "
+      Immediate@37..38
+        Hash@37..38 "#"
+  Newline@38..39 "\n"
+  Error@39..44
+    Comma@39..40 ","
+    Whitespace@40..41 " "
+    Ident@41..44 "nop"
+  Newline@44..45 "\n"
+  Instruction@45..48
+    Ident@45..48 "ret"
+  Newline@48..49 "\n"
+error 7..9: expected , or end of line
+error 25..27: expected ] to close the memory operand
+error 38..38: expected a value after #
+error 39..40: expected an instruction, directive, or label

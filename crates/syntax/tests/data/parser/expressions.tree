@@ -1,0 +1,93 @@
+SourceFile@0..77
+  Assignment@0..14
+    Ident@0..1 "a"
+    Whitespace@1..2 " "
+    Eq@2..3 "="
+    Whitespace@3..4 " "
+    BinExpr@4..14
+      Literal@4..5
+        Number@4..5 "1"
+      Whitespace@5..6 " "
+      Shl@6..8 "<<"
+      Whitespace@8..9 " "
+      BinExpr@9..14
+        Literal@9..10
+          Number@9..10 "2"
+        Whitespace@10..11 " "
+        Plus@11..12 "+"
+        Whitespace@12..13 " "
+        Literal@13..14
+          Number@13..14 "1"
+  Newline@14..15 "\n"
+  Assignment@15..31
+    Ident@15..16 "b"
+    Whitespace@16..17 " "
+    Eq@17..18 "="
+    Whitespace@18..19 " "
+    BinExpr@19..31
+      ParenExpr@19..26
+        LParen@19..20 "("
+        BinExpr@20..25
+          NameRef@20..21
+            Ident@20..21 "a"
+          Whitespace@21..22 " "
+          Minus@22..23 "-"
+          Whitespace@23..24 " "
+          Literal@24..25
+            Number@24..25 "1"
+        RParen@25..26 ")"
+      Whitespace@26..27 " "
+      Star@27..28 "*"
+      Whitespace@28..29 " "
+      PrefixExpr@29..31
+        Minus@29..30 "-"
+        Literal@30..31
+          Number@30..31 "2"
+  Newline@31..32 "\n"
+  Assignment@32..52
+    Ident@32..33 "c"
+    Whitespace@33..34 " "
+    Eq@34..35 "="
+    Whitespace@35..36 " "
+    BinExpr@36..52
+      BinExpr@36..46
+        Literal@36..37
+          Number@36..37 "6"
+        Whitespace@37..38 " "
+        Amp@38..39 "&"
+        Whitespace@39..40 " "
+        BinExpr@40..46
+          Literal@40..41
+            Number@40..41 "3"
+          Whitespace@41..42 " "
+          EqEq@42..44 "=="
+          Whitespace@44..45 " "
+          Literal@45..46
+            Number@45..46 "3"
+      Whitespace@46..47 " "
+      PipePipe@47..49 "||"
+      Whitespace@49..50 " "
+      PrefixExpr@50..52
+        Bang@50..51 "!"
+        Literal@51..52
+          Number@51..52 "0"
+  Newline@52..53 "\n"
+  Directive@53..76
+    Ident@53..58 ".quad"
+    Whitespace@58..59 " "
+    ArgList@59..76
+      BinExpr@59..72
+        NameRef@59..63
+          Ident@59..63 "_end"
+        Whitespace@63..64 " "
+        Minus@64..65 "-"
+        Whitespace@65..66 " "
+        NameRef@66..72
+          Ident@66..72 "_start"
+      Comma@72..73 ","
+      Whitespace@73..74 " "
+      PrefixExpr@74..76
+        Tilde@74..75 "~"
+        Literal@75..76
+          Number@75..76 "0"
+  Newline@76..77 "\n"

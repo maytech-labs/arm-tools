@@ -1,0 +1,207 @@
+SourceFile@0..226
+  Instruction@0..25
+    Ident@0..3 "stp"
+    Whitespace@3..4 " "
+    OperandList@4..25
+      NameRef@4..7
+        Ident@4..7 "x29"
+      Comma@7..8 ","
+      Whitespace@8..9 " "
+      NameRef@9..12
+        Ident@9..12 "x30"
+      Comma@12..13 ","
+      Whitespace@13..14 " "
+      Memory@14..25
+        LBracket@14..15 "["
+        NameRef@15..17
+          Ident@15..17 "sp"
+        Comma@17..18 ","
+        Whitespace@18..19 " "
+        Immediate@19..23
+          Hash@19..20 "#"
+          PrefixExpr@20..23
+            Minus@20..21 "-"
+            Literal@21..23
+              Number@21..23 "16"
+        RBracket@23..24 "]"
+        Bang@24..25 "!"
+  Newline@25..26 "\n"
+  Instruction@26..50
+    Ident@26..29 "ldr"
+    Whitespace@29..30 " "
+    OperandList@30..50
+      NameRef@30..32
+        Ident@30..32 "x0"
+      Comma@32..33 ","
+      Whitespace@33..34 " "
+      Memory@34..50
+        LBracket@34..35 "["
+        NameRef@35..37
+          Ident@35..37 "x1"
+        Comma@37..38 ","
+        Whitespace@38..39 " "
+        NameRef@39..41
+          Ident@39..41 "x2"
+        Comma@41..42 ","
+        Whitespace@42..43 " "
+        Shift@43..49
+          Ident@43..46 "lsl"
+          Whitespace@46..47 " "
+          Immediate@47..49
+            Hash@47..48 "#"
+            Literal@48..49
+              Number@48..49 "3"
+        RBracket@49..50 "]"
+  Newline@50..51 "\n"
+  Instruction@51..67
+    Ident@51..54 "ldr"
+    Whitespace@54..55 " "
+    OperandList@55..67
+      NameRef@55..57
+        Ident@55..57 "x0"
+      Comma@57..58 ","
+      Whitespace@58..59 " "
+      Memory@59..63
+        LBracket@59..60 "["
+        NameRef@60..62
+          Ident@60..62 "x1"
+        RBracket@62..63 "]"
+      Comma@63..64 ","
+      Whitespace@64..65 " "
+      Immediate@65..67
+        Hash@65..66 "#"
+        Literal@66..67
+          Number@66..67 "8"
+  Newline@67..68 "\n"
+  Instruction@68..86
+    Ident@68..72 "adrp"
+    Whitespace@72..73 " "
+    OperandList@73..86
+      NameRef@73..75
+        Ident@73..75 "x0"
+      Comma@75..76 ","
+      Whitespace@76..77 " "
+      NameRef@77..86
+        Ident@77..81 "_msg"
+        Variant@81..86
+          At@81..82 "@"
+          Ident@82..86 "PAGE"
+  Newline@86..87 "\n"
+  Instruction@87..111
+    Ident@87..90 "add"
+    Whitespace@90..91 " "
+    OperandList@91..111
+      NameRef@91..93
+        Ident@91..93 "x0"
+      Comma@93..94 ","
+      Whitespace@94..95 " "
+      NameRef@95..97
+        Ident@95..97 "x0"
+      Comma@97..98 ","
+      Whitespace@98..99 " "
+      NameRef@99..111
+        Ident@99..103 "_msg"
+        Variant@103..111
+          At@103..104 "@"
+          Ident@104..111 "PAGEOFF"
+  Newline@111..112 "\n"
+  Instruction@112..135
+    Ident@112..115 "ld1"
+    Whitespace@115..116 " "
+    OperandList@116..135
+      RegisterList@116..129
+        LBrace@116..117 "{"
+        RegisterRange@117..128
+          Ident@117..122 "v0.4s"
+          Minus@122..123 "-"
+          Ident@123..128 "v3.4s"
+        RBrace@128..129 "}"
+      Comma@129..130 ","
+      Whitespace@130..131 " "
+      Memory@131..135
+        LBracket@131..132 "["
+        NameRef@132..134
+          Ident@132..134 "x0"
+        RBracket@134..135 "]"
+  Newline@135..136 "\n"
+  Instruction@136..155
+    Ident@136..139 "ld1"
+    Whitespace@139..140 " "
+    OperandList@140..155
+      RegisterList@140..149
+        LBrace@140..141 "{"
+        NameRef@141..145
+          Ident@141..145 "v0.s"
+        RBrace@145..146 "}"
+        LBracket@146..147 "["
+        Literal@147..148
+          Number@147..148 "1"
+        RBracket@148..149 "]"
+      Comma@149..150 ","
+      Whitespace@150..151 " "
+      Memory@151..155
+        LBracket@151..152 "["
+        NameRef@152..154
+          Ident@152..154 "x0"
+        RBracket@154..155 "]"
+  Newline@155..156 "\n"
+  Instruction@156..171
+    Ident@156..159 "mov"
+    Whitespace@159..160 " "
+    OperandList@160..171
+      Indexed@160..167
+        Ident@160..164 "v0.s"
+        LBracket@164..165 "["
+        Literal@165..166
+          Number@165..166 "1"
+        RBracket@166..167 "]"
+      Comma@167..168 ","
+      Whitespace@168..169 " "
+      NameRef@169..171
+        Ident@169..171 "w0"
+  Newline@171..172 "\n"
+  Instruction@172..191
+    Ident@172..175 "ldr"
+    Whitespace@175..176 " "
+    OperandList@176..191
+      NameRef@176..178
+        Ident@176..178 "x0"
+      Comma@178..179 ","
+      Whitespace@179..180 " "
+      LiteralPool@180..191
+        Eq@180..181 "="
+        Literal@181..191
+          Number@181..191 "0x12345678"
+  Newline@191..192 "\n"
+  Instruction@192..211
+    Ident@192..196 "csel"
+    Whitespace@196..197 " "
+    OperandList@197..211
+      NameRef@197..199
+        Ident@197..199 "x0"
+      Comma@199..200 ","
+      Whitespace@200..201 " "
+      NameRef@201..203
+        Ident@201..203 "x1"
+      Comma@203..204 ","
+      Whitespace@204..205 " "
+      NameRef@205..207
+        Ident@205..207 "x2"
+      Comma@207..208 ","
+      Whitespace@208..209 " "
+      NameRef@209..211
+        Ident@209..211 "eq"
+  Newline@211..212 "\n"
+  Instruction@212..225
+    Ident@212..216 "fmov"
+    Whitespace@216..217 " "
+    OperandList@217..225
+      NameRef@217..219
+        Ident@217..219 "d0"
+      Comma@219..220 ","
+      Whitespace@220..221 " "
+      Immediate@221..225
+        Hash@221..222 "#"
+        Literal@222..225
+          Number@222..225 "1.5"
+  Newline@225..226 "\n"

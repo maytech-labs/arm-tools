@@ -1,0 +1,85 @@
+SourceFile@0..184
+  Label@0..7
+    Ident@0..6 "_start"
+    Colon@6..7 ":"
+  Whitespace@7..8 " "
+  Label@8..15
+    Ident@8..14 "_alias"
+    Colon@14..15 ":"
+  Whitespace@15..25 "          "
+  Comment@25..47 "; two labels, one line"
+  Newline@47..48 "\n"
+  Label@48..50
+    Number@48..49 "1"
+    Colon@49..50 ":"
+  Whitespace@50..52 "  "
+  Instruction@52..56
+    Ident@52..53 "b"
+    Whitespace@53..54 " "
+    OperandList@54..56
+      Literal@54..56
+        LocalLabelRef@54..56 "1b"
+  Newline@56..57 "\n"
+  Label@57..71
+    StringLit@57..70 "\"quoted name\""
+    Colon@70..71 ":"
+  Whitespace@71..72 " "
+  Instruction@72..75
+    Ident@72..75 "nop"
+  Newline@75..76 "\n"
+  Whitespace@76..80 "    "
+  Directive@80..93
+    Ident@80..86 ".globl"
+    Whitespace@86..87 " "
+    ArgList@87..93
+      NameRef@87..93
+        Ident@87..93 "_start"
+  Newline@93..94 "\n"
+  Whitespace@94..98 "    "
+  Directive@98..146
+    Ident@98..106 ".section"
+    Whitespace@106..107 " "
+    ArgList@107..146
+      NameRef@107..113
+        Ident@107..113 "__TEXT"
+      Comma@113..114 ","
+      NameRef@114..120
+        Ident@114..120 "__text"
+      Comma@120..121 ","
+      NameRef@121..128
+        Ident@121..128 "regular"
+      Comma@128..129 ","
+      NameRef@129..146
+        Ident@129..146 "pure_instructions"
+  Newline@146..147 "\n"
+  Assignment@147..158
+    Ident@147..154 "counter"
+    Whitespace@154..155 " "
+    Eq@155..156 "="
+    Whitespace@156..157 " "
+    Literal@157..158
+      Number@157..158 "4"
+  Newline@158..159 "\n"
+  Assignment@159..168
+    Ident@159..160 "."
+    Whitespace@160..161 " "
+    Eq@161..162 "="
+    Whitespace@162..163 " "
+    BinExpr@163..168
+      NameRef@163..164
+        Ident@163..164 "."
+      Whitespace@164..165 " "
+      Plus@165..166 "+"
+      Whitespace@166..167 " "
+      Literal@167..168
+        Number@167..168 "8"
+  Newline@168..169 "\n"
+  Whitespace@169..173 "    "
+  Instruction@173..176
+    Ident@173..176 "nop"
+  Whitespace@176..177 " "
+  Separator@177..179 "%%"
+  Whitespace@179..180 " "
+  Instruction@180..183
+    Ident@180..183 "ret"
+  Newline@183..184 "\n"

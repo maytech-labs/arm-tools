@@ -1,0 +1,3 @@
+# unwrap/expect are fine in tests (AGENTS.md).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

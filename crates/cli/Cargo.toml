@@ -1,0 +1,19 @@
+[package]
+name = "arm-cli"
+description = "Command line for Apple AArch64 assembly: lint, check, fmt."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "armtool"
+path = "src/main.rs"
+
+[dependencies]
+arm-lint.workspace = true
+
+[lints]
+workspace = true

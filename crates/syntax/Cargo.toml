@@ -1,0 +1,16 @@
+[package]
+name = "arm-syntax"
+description = "Lexer and lossless, error-tolerant parser for Apple AArch64 assembly."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+rowan = "0.17.0"
+
+
+[lints]
+workspace = true

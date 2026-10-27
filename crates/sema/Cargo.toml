@@ -1,0 +1,16 @@
+[package]
+name = "arm-sema"
+description = "Symbols, labels, macros, includes, and sections for AArch64 assembly."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+arm-syntax.workspace = true
+arm-isa.workspace = true
+
+[lints]
+workspace = true

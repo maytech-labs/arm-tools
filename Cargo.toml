@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+authors = ["Trammel May"]
+repository = "https://github.com/trammel-may/arm-tools"
+homepage = "https://github.com/trammel-may/arm-tools"
+
+[workspace.dependencies]
+arm-syntax = { path = "crates/syntax" }
+arm-isa = { path = "crates/isa" }
+arm-sema = { path = "crates/sema" }
+arm-lint = { path = "crates/lint" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,55 @@
+SourceFile@0..55
+  Instruction@0..3
+    Ident@0..1 "m"
+    Whitespace@1..2 " "
+    OperandList@2..3
+      Literal@2..3
+        Number@2..3 "1"
+  Newline@3..4 "\n"
+  Directive@4..14
+    Ident@4..10 ".macro"
+    Whitespace@10..11 " "
+    ArgList@11..14
+      NameRef@11..12
+        Ident@11..12 "m"
+      Whitespace@12..13 " "
+      NameRef@13..14
+        Ident@13..14 "a"
+  Newline@14..15 "\n"
+  Instruction@15..31
+    Ident@15..18 "add"
+    Whitespace@18..19 " "
+    ArgList@19..31
+      NameRef@19..22
+        Ident@19..22 "v0."
+      MacroArg@22..24
+        Backslash@22..23 "\\"
+        Ident@23..24 "a"
+      Comma@24..25 ","
+      Whitespace@25..26 " "
+      NameRef@26..29
+        Ident@26..29 "v1."
+      MacroArg@29..31
+        Backslash@29..30 "\\"
+        Ident@30..31 "a"
+  Newline@31..32 "\n"
+  Directive@32..37
+    Ident@32..37 ".endm"
+  Newline@37..38 "\n"
+  MacroCall@38..42
+    Ident@38..39 "m"
+    Whitespace@39..40 " "
+    ArgList@40..42
+      Literal@40..41
+        Number@40..41 "8"
+      NameRef@41..42
+        Ident@41..42 "h"
+  Newline@42..43 "\n"
+  RegisterAlias@43..54
+    Ident@43..46 "tmp"
+    Whitespace@46..47 " "
+    Ident@47..51 ".req"
+    Whitespace@51..52 " "
+    NameRef@52..54
+      Ident@52..54 "x9"
+  Newline@54..55 "\n"
