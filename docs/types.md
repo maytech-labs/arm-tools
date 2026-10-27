@@ -109,4 +109,6 @@ At a call to printf, fprintf, sprintf, snprintf, or dprintf, if the format regis
 | `types/pointer-width` | A pointer read through a W register |
 | `types/annotation` | An annotation that can't be read |
 
+Most findings have a quick fix (in the editor, or `armtool lint --fix`): `sxtw` before a call or return that needs a sign-extended value, the right condition code or divide, X registers for a pointer, and the layout's value for an offset constant.
+
 An integer fits where a wider one is wanted if it's unsigned, since writing a W register zeroes the top half; a signed one needs `sxtw` first. Signed and unsigned integers of the same width fit each other.

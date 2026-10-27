@@ -73,3 +73,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Types from C: calls are checked against the project's C prototypes and common C library functions, and printf-family calls against their format strings (`types/format`), including Darwin's stack-passed variadic arguments.
 - Structs in types: `armtool: struct name { ... }` with C's layout; loads, stores, and pointer arithmetic through a struct pointer are checked against its fields, and `types/layout` checks `struct_field` offset constants.
 - Structs from C: struct and typedef definitions in the project's C files type the assembly that uses them, with no annotation.
+- Quick fixes for type findings: insert `sxtw`, swap a signed condition for its unsigned counterpart (or `sdiv` and `udiv`), use X registers for a pointer, and correct an offset constant.

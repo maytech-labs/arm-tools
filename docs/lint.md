@@ -175,6 +175,8 @@ An argument or return value that doesn't match the annotated signature
 
 With `; armtool: fn _f(x0: ptr<u8>, x1: i64) -> i32`, each call to _f is checked: x0 must hold a pointer and x1 a 64-bit integer where their types are known, and _f's own returns must leave an i32 in x0. A 32-bit signed value where 64 bits are wanted needs sign-extending first (sxtw). See docs/types.md.
 
+Quick fix: inserts `sxtw` (or `sxth`, `sxtb`) before the call or return when a narrower signed value is passed where 64 bits are wanted.
+
 Default level: warning.
 
 ### `types/signedness`
@@ -182,6 +184,8 @@ Default level: warning.
 A signed test on unsigned values, or the reverse
 
 After comparing unsigned values, b.gt, b.ge, b.lt, and b.le test the wrong flags; use b.hi, b.hs, b.lo, and b.ls. Signed values want the first set. sdiv and udiv must match their operands too. Types come from annotations; see docs/types.md.
+
+Quick fix: swaps the condition for its counterpart (`gt` and `hi`, `ge` and `hs`, `lt` and `lo`, `le` and `ls`), or `sdiv` and `udiv`.
 
 Default level: warning.
 
@@ -215,6 +219,8 @@ A field-offset constant that disagrees with the struct's layout
 
 With `; armtool: struct point { x: i32, y: i32 }`, constants named point_x, point_y, and point_size are checked against the layout C would give the struct: fields at the next multiple of their alignment, the size rounded up to the largest alignment. A stale offset reads the wrong field. See docs/types.md.
 
+Quick fix: sets the constant to the layout's value.
+
 Default level: warning.
 
 ### `types/pointer-width`
@@ -222,6 +228,8 @@ Default level: warning.
 A pointer read through a 32-bit W register
 
 Pointers are 64 bits. Reading one as w0 instead of x0 keeps only the low half. On macOS every user-space address is above 4 GB, so the result is always wrong there; on Linux, heap and stack addresses usually are too. Use the X register.
+
+Quick fix: switches the instruction's W registers to X.
 
 Default level: warning.
 

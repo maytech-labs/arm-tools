@@ -875,14 +875,27 @@ impl Checker<'_> {
             if is_w(operand)
                 && let Some(Ty::Ptr(_)) = register_id(operand).and_then(|id| state.types.get(&id))
             {
-                out.push(finding(
-                    "types/pointer-width",
-                    at(k),
-                    format!(
-                        "{} is a pointer, but this reads its low 32 bits only. Use the X register",
-                        register_name(operand)
+                // Every W register in the instruction becomes X, so the
+                // widths still agree: `add w1, w0, #1` is `add x1, x0, #1`.
+                let edits: Vec<(Range<usize>, String)> = ops
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, o)| is_w(o))
+                    .filter_map(|(n, o)| Some((insn.operand_ranges.get(n)?.clone(), x_name(o)?)))
+                    .collect();
+                out.push(fixed(
+                    finding(
+                        "types/pointer-width",
+                        at(k),
+                        format!(
+                            "{} is a pointer, but this reads its low 32 bits only. Use the X register",
+                            register_name(operand)
+                        ),
                     ),
+                    "Use X registers".into(),
+                    edits,
                 ));
+                break;
             }
         }
         // Loads and stores against the pointee.
@@ -1034,15 +1047,35 @@ impl Checker<'_> {
             };
             if signed_test != signed_values {
                 let line = self.line(self.cfg.insns[setter].range.start);
-                out.push(finding(
+                let found = finding(
                     "types/signedness",
                     insn.range.clone(),
                     format!(
                         "the compare on line {line} is of {} values, but {cond} is {} test. Use {other}",
                         if signed_values { "signed" } else { "unsigned" },
-                        if signed_test { "a signed" } else { "an unsigned" }
+                        if signed_test {
+                            "a signed"
+                        } else {
+                            "an unsigned"
+                        }
                     ),
-                ));
+                );
+                // `b.gt` is in the mnemonic; `csel ..., gt` an operand.
+                let text = self.analysis.text();
+                let edit = if insn.mnemonic.condition.is_some() {
+                    let written = &text[insn.mnemonic_range.clone()];
+                    let head = written.split('.').next().unwrap_or(written);
+                    Some((insn.mnemonic_range.clone(), format!("{head}.{other}")))
+                } else {
+                    ops.iter()
+                        .position(|o| matches!(o, Operand::CondCode(_) | Operand::Ident(_)))
+                        .and_then(|n| insn.operand_ranges.get(n).cloned())
+                        .map(|range| (range, other.to_string()))
+                };
+                out.push(match edit {
+                    Some(edit) => fixed(found, format!("Use {other}"), vec![edit]),
+                    None => found,
+                });
             }
         }
         if matches!(head, "sdiv" | "udiv") {
@@ -1051,16 +1084,20 @@ impl Checker<'_> {
                 if let Some(Ty::Int { signed, .. }) = operand_type(&state.types, operand)
                     && signed != want_signed
                 {
-                    out.push(finding(
-                        "types/signedness",
-                        at(k),
-                        format!(
-                            "{} is {}, but {head} divides {} values. Use {}",
-                            register_name(operand),
-                            if signed { "signed" } else { "unsigned" },
-                            if want_signed { "signed" } else { "unsigned" },
-                            if want_signed { "udiv" } else { "sdiv" }
+                    let instead = if want_signed { "udiv" } else { "sdiv" };
+                    out.push(fixed(
+                        finding(
+                            "types/signedness",
+                            at(k),
+                            format!(
+                                "{} is {}, but {head} divides {} values. Use {instead}",
+                                register_name(operand),
+                                if signed { "signed" } else { "unsigned" },
+                                if want_signed { "signed" } else { "unsigned" },
+                            ),
                         ),
+                        format!("Use {instead}"),
+                        vec![(insn.mnemonic_range.clone(), instead.to_string())],
                     ));
                     break;
                 }
@@ -1077,7 +1114,7 @@ impl Checker<'_> {
                 if let Some(actual) = state.types.get(register)
                     && !fits(expected, actual)
                 {
-                    out.push(finding(
+                    let found = finding(
                         "types/call",
                         insn.range.clone(),
                         format!(
@@ -1085,7 +1122,14 @@ impl Checker<'_> {
                             callee.name,
                             advice(expected, actual, register)
                         ),
-                    ));
+                    );
+                    out.push(match sign_extend(expected, actual, register) {
+                        Some(line) => {
+                            let edit = insert_before(self.analysis.text(), insn, &line);
+                            fixed(found, format!("Insert `{line}`"), vec![edit])
+                        }
+                        None => found,
+                    });
                 }
             }
         }
@@ -1101,14 +1145,21 @@ impl Checker<'_> {
             if let Some(actual) = state.types.get(register)
                 && !fits(expected, actual)
             {
-                out.push(finding(
+                let found = finding(
                     "types/call",
                     insn.range.clone(),
                     format!(
                         "{name} returns {expected}, but {register} holds {actual} here{}",
                         advice(expected, actual, register)
                     ),
-                ));
+                );
+                out.push(match sign_extend(expected, actual, register) {
+                    Some(line) => {
+                        let edit = insert_before(self.analysis.text(), insn, &line);
+                        fixed(found, format!("Insert `{line}`"), vec![edit])
+                    }
+                    None => found,
+                });
             }
         }
     }
@@ -1481,6 +1532,78 @@ fn finding(rule: &'static str, range: Range<usize>, message: String) -> Finding 
     }
 }
 
+fn fixed(mut finding: Finding, title: String, edits: Vec<(Range<usize>, String)>) -> Finding {
+    finding.fix = Some(arm_sema::Fix { title, edits });
+    finding
+}
+
+/// An instruction to insert on its own line before another, indented like it.
+fn insert_before(text: &str, insn: &Instruction, line: &str) -> (Range<usize>, String) {
+    let start = text[..insn.range.start].rfind('\n').map_or(0, |i| i + 1);
+    let indent: String = text[start..insn.range.start]
+        .chars()
+        .map(|c| if c.is_whitespace() { c } else { ' ' })
+        .collect();
+    // After a label on the same line (`1: ret`), insert at the
+    // instruction, then put the instruction on the next line.
+    if text[start..insn.range.start].trim().is_empty() {
+        (start..start, format!("{indent}{line}\n"))
+    } else {
+        let at = insn.range.start;
+        (at..at, format!("{line}\n{indent}"))
+    }
+}
+
+/// The 64-bit name of a W register: `x3` for `w3`, `xzr`, `sp`.
+fn x_name(operand: &Operand) -> Option<String> {
+    let Operand::Register(r) = operand else {
+        return None;
+    };
+    let llvm = r.register.llvm_name();
+    Some(match llvm {
+        "WZR" => "xzr".into(),
+        "WSP" => "sp".into(),
+        _ => format!("x{}", llvm.strip_prefix('W')?),
+    })
+}
+
+/// `sxtw x0, w0` for a signed 32-bit value where 64 bits are wanted.
+fn sign_extend(expected: &Ty, actual: &Ty, register: &str) -> Option<String> {
+    match (expected, actual) {
+        (
+            Ty::Int { bits: 64, .. },
+            Ty::Int {
+                signed: true,
+                bits: 32,
+            },
+        ) => {
+            let n = register.trim_start_matches('x');
+            Some(format!("sxtw x{n}, w{n}"))
+        }
+        (
+            Ty::Int { bits: 64, .. },
+            Ty::Int {
+                signed: true,
+                bits: 16,
+            },
+        ) => {
+            let n = register.trim_start_matches('x');
+            Some(format!("sxth x{n}, w{n}"))
+        }
+        (
+            Ty::Int { bits: 64, .. },
+            Ty::Int {
+                signed: true,
+                bits: 8,
+            },
+        ) => {
+            let n = register.trim_start_matches('x');
+            Some(format!("sxtb x{n}, w{n}"))
+        }
+        _ => None,
+    }
+}
+
 /// Infers types through every function and checks them. Malformed
 /// annotations are findings too.
 pub(crate) fn run(
@@ -1560,13 +1683,36 @@ fn layout_constants(analysis: &Analysis, annotations: &Annotations, out: &mut Ve
                 && actual != value as i64
             {
                 let unit = if what.ends_with(" is") { " bytes" } else { "" };
-                out.push(finding(
+                let found = finding(
                     "types/layout",
                     symbol.range.clone(),
                     format!(
                         "{constant} is {actual}, but {what} {value}{unit}. Change it to {value}"
                     ),
-                ));
+                );
+                // The value is after `=`, or after the name's comma in
+                // `.set name, value` and `.equ`.
+                let statement = &analysis.text()[symbol.statement.clone()];
+                let after_name = symbol.range.end - symbol.statement.start;
+                let value_at = statement[after_name..]
+                    .find(['=', ','])
+                    .map(|k| after_name + k + 1);
+                out.push(match value_at {
+                    Some(k) => {
+                        let rest = &statement[k..];
+                        let lead = rest.len() - rest.trim_start().len();
+                        let value_end = rest.find([';', '/', '\n']).unwrap_or(rest.len());
+                        let written = rest[..value_end].trim_end();
+                        let start = symbol.statement.start + k + lead;
+                        let end = symbol.statement.start + k + written.len();
+                        fixed(
+                            found,
+                            format!("Change {constant} to {value}"),
+                            vec![(start..end.max(start), value.to_string())],
+                        )
+                    }
+                    None => found,
+                });
             }
         }
     }
@@ -2152,6 +2298,94 @@ _f:
     fn unknown_structs_are_annotation_errors() {
         let text = "; armtool: fn _f(x0: ptr<missing>) -> void\n.globl _f\n_f:\n    ret\n";
         assert_eq!(types(text)[0].0, "types/annotation");
+    }
+
+    #[test]
+    fn fixes_repair_what_they_say() {
+        let text = "\
+; armtool: struct point { x: i32, y: i32 }
+; armtool: fn _scale(x0: i64) -> i64
+; armtool: fn _f(x0: u64, w1: i32, x2: ptr<u8>) -> i64
+point_y = 2
+.globl _f
+_f:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+    mov     w20, w1
+    cmp     x0, #10
+    cset    x3, lt
+    b.gt    1f
+    udiv    x4, x1, x1
+    add     w5, w2, #1
+    mov     w0, w1
+    bl      _scale
+1:  mov     w0, w20
+    ldp     x29, x30, [sp], #16
+    ret
+";
+        let found: Vec<arm_sema::Diagnostic> = lint(&Analysis::new(text), &Config::default())
+            .into_iter()
+            .filter(|d| d.code.starts_with("types/"))
+            .collect();
+        let titles: Vec<String> = found
+            .iter()
+            .filter_map(|d| d.fix.as_ref().map(|f| f.title.clone()))
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Change point_y to 4",
+                "Use lo",
+                "Use hi",
+                "Use sdiv",
+                "Use X registers",
+                "Insert `sxtw x0, w0`",
+                "Insert `sxtw x0, w0`"
+            ],
+            "{found:?}"
+        );
+        // Apply them all, last first.
+        let mut edits: Vec<(Range<usize>, String)> = found
+            .iter()
+            .filter_map(|d| d.fix.clone())
+            .flat_map(|f| f.edits)
+            .collect();
+        edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+        let mut repaired = text.to_string();
+        for (range, with) in edits {
+            repaired.replace_range(range, &with);
+        }
+        assert!(repaired.contains("point_y = 4"), "{repaired}");
+        assert!(
+            repaired.contains("cset    x3, lo") && repaired.contains("b.hi    1f"),
+            "{repaired}"
+        );
+        assert!(repaired.contains("add     x5, x2, #1"), "{repaired}");
+        assert!(
+            repaired.contains("    sxtw x0, w0\n    bl      _scale"),
+            "{repaired}"
+        );
+        assert!(
+            repaired.contains("1:  mov     w0, w20\n    ldp"),
+            "{repaired}"
+        );
+        assert!(repaired.contains("    sxtw x0, w0\n    ret"), "{repaired}");
+        assert_eq!(types(&repaired), [], "{repaired}");
+        if cfg!(target_os = "macos") {
+            let path =
+                std::env::temp_dir().join(format!("arm-lint-fixes-{}.s", std::process::id()));
+            std::fs::write(&path, &repaired).expect("write");
+            let status = std::process::Command::new("xcrun")
+                .args(["clang", "-c", "-arch", "arm64", "-o", "/dev/null"])
+                .arg(&path)
+                .status()
+                .expect("clang runs");
+            let _ = std::fs::remove_file(&path);
+            assert!(
+                status.success(),
+                "clang rejects the repaired file:\n{repaired}"
+            );
+        }
     }
 
     #[test]
