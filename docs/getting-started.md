@@ -2,6 +2,8 @@
 
 ## Install
 
+Prebuilt binaries for macOS (Apple silicon) and Linux (x86_64 and arm64) are on the [releases page](https://github.com/maytech-labs/arm-tools/releases): unpack one and put `armls` and `armtool` on your `PATH`.
+
 With Homebrew, from this repository's tap (builds the latest `main`):
 
 ```sh

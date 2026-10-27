@@ -79,6 +79,14 @@ Copy `docs/decisions/0000-template.md` to the next number, and add it to the lis
 
 Plain, direct, and concrete, in docs, comments, diagnostics, and commit messages. Short sentences, active voice, contractions. No em dashes, no hype, no exclamation points. Sentence case for headings. Name the file, the command, the instruction.
 
+## Releases
+
+To release, on `main` with CI green ([0044](docs/decisions/0044-releases.md)):
+
+1. Set the version in `Cargo.toml` (and `editors/vscode/package.json`), and rename `CHANGELOG.md`'s **Unreleased** section to `X.Y.Z - YYYY-MM-DD`, adding a fresh empty **Unreleased** above it.
+2. Commit as `chore: release X.Y.Z`, then tag and push: `git tag vX.Y.Z && git push upstream main vX.Y.Z`.
+3. `.github/workflows/release.yml` builds the binaries and publishes the release with the changelog section as notes.
+
 ## Commits and pull requests
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) and stay terse ([0006](docs/decisions/0006-commit-messages.md)):

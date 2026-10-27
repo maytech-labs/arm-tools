@@ -1,0 +1,39 @@
+name: armtool disagrees with clang
+description: armtool reports an error clang accepts, or misses one clang reports
+labels: [clang-disagreement]
+body:
+  - type: markdown
+    attributes:
+      value: Clang is the source of truth. These reports are the most useful kind; thank you.
+  - type: textarea
+    id: assembly
+    attributes:
+      label: Assembly
+      description: The smallest file that shows it.
+      render: asm
+    validations:
+      required: true
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Which way
+      options:
+        - armtool reports an error, but clang accepts the file
+        - clang rejects the file, but armtool doesn't report it
+    validations:
+      required: true
+  - type: textarea
+    id: clang
+    attributes:
+      label: What clang says
+      description: The command you ran (`clang -c -arch arm64 file.s`, or `--target=aarch64-linux-gnu` for Linux) and its output.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `armtool --version` and `clang --version`.
+    validations:
+      required: true

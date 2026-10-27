@@ -60,3 +60,4 @@
   - [0041 Struct layouts in type annotations](decisions/0041-structs.md)
   - [0042 Struct definitions from C](decisions/0042-c-structs.md)
   - [0043 Catching more of clang's errors: SME arrays, system registers, and movprfx](decisions/0043-recall.md)
+  - [0044 Releases: tagged builds with prebuilt binaries](decisions/0044-releases.md)

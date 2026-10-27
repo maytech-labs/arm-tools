@@ -1,8 +1,8 @@
 {
   "name": "arm-tools",
   "displayName": "AArch64 Assembly (arm-tools)",
-  "description": "Language server, linter, and formatter for AArch64 assembly on macOS, matching Apple's clang.",
-  "version": "0.0.1",
+  "description": "Language server, linter, and formatter for AArch64 assembly on macOS and Linux, matching clang.",
+  "version": "0.1.0",
   "publisher": "trammel-may",
   "license": "MIT",
   "repository": {

@@ -118,6 +118,7 @@ Done when the first rules in the design run in `armls` and `armtool lint`, each 
 ## M8: distribution
 
 - [x] `make install` and a HEAD-only Homebrew formula ([0025](decisions/0025-distribution.md))
-- [ ] GitHub releases and a stable Homebrew formula
+- [x] GitHub releases with prebuilt binaries for macOS and Linux ([0044](decisions/0044-releases.md))
+- [ ] A stable Homebrew formula, from the first release's source archive
 - [x] VS Code extension (`.vsix`), Helix config
 - [ ] VS Code Marketplace listing, Zed extension

@@ -1,6 +1,6 @@
 [package]
 name = "arm-cli"
-description = "Command line for Apple AArch64 assembly: lint, check, fmt."
+description = "Command line for AArch64 assembly on macOS and Linux: check, lint, fmt."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

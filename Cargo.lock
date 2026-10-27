@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "arm-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arm-isa",
  "arm-lint",
@@ -15,14 +15,14 @@ dependencies = [
 
 [[package]]
 name = "arm-isa"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arm-syntax",
 ]
 
 [[package]]
 name = "arm-lint"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arm-isa",
  "arm-sema",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "arm-lsp"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arm-isa",
  "arm-lint",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "arm-sema"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arm-isa",
  "arm-syntax",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "arm-syntax"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "rowan",
 ]
@@ -353,7 +353,7 @@ checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 
 [[package]]
 name = "xtask"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arm-isa",
  "arm-sema",

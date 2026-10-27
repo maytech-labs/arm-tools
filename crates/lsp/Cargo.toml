@@ -1,6 +1,6 @@
 [package]
 name = "arm-lsp"
-description = "Language server for Apple AArch64 assembly."
+description = "Language server for AArch64 assembly on macOS and Linux."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
