@@ -11,4 +11,4 @@ make install PREFIX=~/.local    # somewhere else
 |---|---|
 | Neovim 0.11+ | [neovim/](neovim/README.md) |
 | Helix | Merge [helix/languages.toml](helix/languages.toml) into `~/.config/helix/languages.toml` |
-| VS Code | Planned: a small extension that starts `armls` (roadmap M8) |
+| VS Code | [vscode/](vscode/README.md): build the `.vsix` and install it |

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "AArch64 Assembly",
+  "scopeName": "source.arm64-asm",
+  "patterns": [
+    { "name": "comment.block.arm64-asm", "begin": "/\\*", "end": "\\*/" },
+    { "name": "comment.line.arm64-asm", "match": "(//|;).*$" },
+    { "name": "comment.line.number-sign.arm64-asm", "match": "^\\s*#.*$" },
+    { "name": "string.quoted.double.arm64-asm", "begin": "\"", "end": "\"", "patterns": [{ "name": "constant.character.escape.arm64-asm", "match": "\\\\." }] },
+    { "name": "entity.name.function.label.arm64-asm", "match": "^\\s*[A-Za-z_.$][A-Za-z0-9_.$]*:" },
+    { "name": "entity.name.label.local.arm64-asm", "match": "^\\s*[0-9]+:" },
+    { "name": "keyword.control.directive.arm64-asm", "match": "(?<![\\w.])\\.[A-Za-z_][A-Za-z0-9_]*" },
+    { "name": "variable.language.register.arm64-asm", "match": "\\b(?i:[xw](?:[12]?[0-9]|30)|sp|wsp|xzr|wzr|fp|lr|[vqdshbz](?:[12]?[0-9]|3[01])|pn?(?:1[0-5]|[0-9])|za)\\b" },
+    { "name": "constant.numeric.arm64-asm", "match": "#?-?\\b(0x[0-9A-Fa-f]+|0b[01]+|[0-9]+(\\.[0-9]+)?)\\b" },
+    { "name": "storage.modifier.variant.arm64-asm", "match": "@[A-Za-z]+" },
+    { "name": "keyword.mnemonic.arm64-asm", "match": "^\\s*(?:[A-Za-z_.$][A-Za-z0-9_.$]*:\\s*)?([A-Za-z][A-Za-z0-9.]*)\\b", "captures": { "1": { "name": "keyword.other.mnemonic.arm64-asm" } } }
+  ]
+}

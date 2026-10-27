@@ -31,7 +31,7 @@ The design is in [docs/design.md](docs/design.md), the milestones in [docs/roadm
 
 ## Rules
 
-1. **Rust only**, built with Cargo ([0002](docs/decisions/0002-rust-and-cargo.md)). Prefer small dependencies; say why in the commit or an ADR when you add one.
+1. **Rust only**, built with Cargo ([0002](docs/decisions/0002-rust-and-cargo.md)). The one exception is `editors/vscode`, TypeScript glue that starts armls ([0025](docs/decisions/0025-distribution.md)); check it with `npm run check` there. Prefer small dependencies; say why in the commit or an ADR when you add one.
 2. **Apple's assembler is the source of truth** ([0004](docs/decisions/0004-apple-aarch64-first.md)). If clang (`clang -c -arch arm64`) accepts it, we accept it; if clang rejects it, we report it. When unsure, probe clang and write the result down as a test.
 3. **Never lose a byte.** The syntax tree is lossless ([0008](docs/decisions/0008-lossless-syntax-tree.md)). The parser never fails: bad input becomes error nodes plus diagnostics, and the rest of the file still parses.
 4. **Never crash the server.** A panic in `armls` kills the user's editor session. Same rule as below: no `unwrap`/`expect` outside tests unless a comment proves it can't fail.

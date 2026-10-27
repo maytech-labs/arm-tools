@@ -36,5 +36,6 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - CPU feature checks: "instruction requires: cssc" and friends, following clang's default target (apple-m1), `.arch`, `.cpu`, `.arch_extension`, and `[target]` in armtool.toml. Feature data generated from LLVM.
 - Conditional assembly: `.if` and its relatives are evaluated as clang would; skipped branches aren't checked and are greyed out in the editor.
 - Macro calls, `.rept`, `.irp`, and `.irpc` are expanded and checked, with clang's argument rules; problems are reported at the call.
-- Design doc, roadmap, and ADRs 0001 to 0024.
+- A Homebrew formula (`brew install --HEAD arm-tools` from this repo's tap) and a VS Code extension in `editors/vscode`.
+- Design doc, roadmap, and ADRs 0001 to 0025.
 - `cargo xtask check` and CI on macOS and Linux.

@@ -66,7 +66,6 @@ Done when Neovim and VS Code show diagnostics, hover, definition, references, co
 - [x] Folding ranges and quick-fix code actions ([0021](decisions/0021-quick-fixes.md))
 - [ ] Inlay hints
 - [x] `editors/` setup for Neovim and Helix, `make install`, and `cargo xtask nvim-smoke`
-- [ ] VS Code extension
 
 ## M5: linter
 
@@ -90,5 +89,7 @@ Done when the first rules in the design run in `armls` and `armtool lint`, each 
 
 ## M8: distribution
 
-- [ ] `make install`, Homebrew formula, GitHub releases
-- [ ] VS Code Marketplace extension, Helix and Zed configs
+- [x] `make install` and a HEAD-only Homebrew formula ([0025](decisions/0025-distribution.md))
+- [ ] GitHub releases and a stable Homebrew formula
+- [x] VS Code extension (`.vsix`), Helix config
+- [ ] VS Code Marketplace listing, Zed extension

@@ -17,6 +17,15 @@ The linter goes past syntax: ABI rules (callee-saved registers, x18, stack align
 
 ## Install
 
+With Homebrew, once the repo is public (builds the latest `main`):
+
+```sh
+brew tap trammel-may/arm-tools https://github.com/trammel-may/arm-tools
+brew install --HEAD arm-tools
+```
+
+From a clone:
+
 ```sh
 make install                    # armls and armtool into /usr/local/bin
 make install PREFIX=~/.local    # somewhere else

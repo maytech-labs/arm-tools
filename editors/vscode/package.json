@@ -1,0 +1,70 @@
+{
+  "name": "arm-tools",
+  "displayName": "AArch64 Assembly (arm-tools)",
+  "description": "Language server, linter, and formatter for AArch64 assembly on macOS, matching Apple's clang.",
+  "version": "0.0.1",
+  "publisher": "trammel-may",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trammel-may/arm-tools"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "arm64-asm",
+        "aliases": [
+          "AArch64 Assembly",
+          "arm64-asm"
+        ],
+        "extensions": [
+          ".s",
+          ".S"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "arm64-asm",
+        "scopeName": "source.arm64-asm",
+        "path": "./syntaxes/arm64-asm.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "arm-tools",
+      "properties": {
+        "armTools.serverPath": {
+          "type": "string",
+          "default": "armls",
+          "description": "Path to the armls binary. The default finds it on your PATH (make install puts it in /usr/local/bin)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "check": "tsc -p ./ --noEmit",
+    "package": "npm run compile && vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "@types/vscode": "1.90.0",
+    "@vscode/vsce": "2.32.0",
+    "esbuild": "0.23.1",
+    "typescript": "5.5.4"
+  }
+}
