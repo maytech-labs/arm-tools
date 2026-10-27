@@ -54,9 +54,18 @@ pub fn run(connection: &Connection) -> Result<bool> {
     });
     connection.initialize_finish(id, result)?;
 
+    let snippets = params
+        .capabilities
+        .text_document
+        .as_ref()
+        .and_then(|t| t.completion.as_ref())
+        .and_then(|c| c.completion_item.as_ref())
+        .and_then(|i| i.snippet_support)
+        .unwrap_or(false);
     let mut server = Server {
         connection,
         encoding,
+        snippets,
         documents: HashMap::new(),
         index: crate::workspace::Index::scan(&roots),
     };
@@ -196,6 +205,8 @@ struct Document {
 struct Server<'c> {
     connection: &'c Connection,
     encoding: Encoding,
+    /// Whether the client takes snippet syntax in completions.
+    snippets: bool,
     documents: HashMap<Uri, Document>,
     /// The project's global labels and references, across files.
     index: crate::workspace::Index,
@@ -407,6 +418,7 @@ impl Server<'_> {
                         let globals = self.index.global_names();
                         let items = ide::completions(&doc.analysis, offset, &globals)
                             .into_iter()
+                            .filter(|c| self.snippets || c.kind != ide::CompletionKind::Snippet)
                             .enumerate()
                             .map(|(i, c)| CompletionItem {
                                 // Keep our order: x2 before x10.
@@ -1040,11 +1052,17 @@ fn completion_item(completion: ide::Completion) -> CompletionItem {
         K::Label => CompletionItemKind::REFERENCE,
         K::Constant => CompletionItemKind::CONSTANT,
         K::RegisterAlias => CompletionItemKind::VARIABLE,
+        K::Snippet => CompletionItemKind::SNIPPET,
     };
     CompletionItem {
         label: completion.label,
         kind: Some(kind),
         detail: completion.detail,
+        insert_text_format: completion
+            .insert
+            .is_some()
+            .then_some(lsp_types::InsertTextFormat::SNIPPET),
+        insert_text: completion.insert,
         ..CompletionItem::default()
     }
 }

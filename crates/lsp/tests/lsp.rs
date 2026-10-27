@@ -26,7 +26,8 @@ struct Client {
 }
 
 impl Client {
-    /// Starts armls and completes the handshake. `utf8` offers UTF-8 positions.
+    /// Starts armls and completes the handshake. `utf8` offers UTF-8
+    /// positions and, like the editors that do, snippets in completions.
     fn start(utf8: bool) -> Client {
         Client::start_in(utf8, None)
     }
@@ -63,8 +64,10 @@ impl Client {
         } else {
             json!(["utf-16"])
         };
-        let mut params =
-            json!({ "capabilities": { "general": { "positionEncodings": encodings } } });
+        let mut params = json!({ "capabilities": {
+            "general": { "positionEncodings": encodings },
+            "textDocument": { "completion": { "completionItem": { "snippetSupport": utf8 } } },
+        } });
         if let Some(root) = root {
             params["workspaceFolders"] = json!([{ "uri": root, "name": "project" }]);
         }
@@ -761,6 +764,31 @@ fn completion() {
     assert!(!labels.contains(&"x0"));
     assert_eq!(items[0]["sortText"], "00000");
     assert!(client.shutdown().success());
+}
+
+#[test]
+fn snippets_only_for_clients_that_take_them() {
+    for snippets in [true, false] {
+        let mut client = Client::start(snippets);
+        client.open("    \n");
+        let items = client.at("textDocument/completion", 0, 4, json!({}));
+        let func = items
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|i| i["label"] == "func");
+        match func {
+            Some(func) => {
+                assert!(snippets);
+                assert_eq!(func["insertTextFormat"], 2);
+                assert_eq!(func["kind"], 15);
+                let body = func["insertText"].as_str().unwrap_or_default();
+                assert!(body.starts_with(".globl _${1:name}"), "{body}");
+            }
+            None => assert!(!snippets, "no func snippet"),
+        }
+        assert!(client.shutdown().success());
+    }
 }
 
 #[test]

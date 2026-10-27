@@ -17,6 +17,7 @@ What you get, with the default keymaps of Neovim 0.11:
 | Outline | `gO` |
 | Completion: only what fits the operand (conditions after `csel`, base registers after `[`) | `Ctrl-x Ctrl-o`, or your completion plugin |
 | Signature help: the instruction's forms, with the operand you're on | `Ctrl-s` in insert mode |
+| Snippets (`func`, `main`, `addr`, `syscall`, ...) | Your completion plugin, with a snippet engine |
 | Format | `:lua vim.lsp.buf.format()`, or on save with a `BufWritePre` autocommand |
 | Quick fixes | `gra` (code actions) on a diagnostic |
 | Folding | `:set foldmethod=expr foldexpr=v:lua.vim.lsp.foldexpr()` |

@@ -155,6 +155,8 @@ pub enum CompletionKind {
     Constant,
     RegisterAlias,
     Condition,
+    /// A template: `insert` holds LSP snippet syntax.
+    Snippet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,7 +164,82 @@ pub struct Completion {
     pub label: String,
     pub kind: CompletionKind,
     pub detail: Option<String>,
+    /// What to insert instead of the label, for snippets.
+    pub insert: Option<String>,
 }
+
+/// A template for code that's written the same way every time.
+pub struct Snippet {
+    pub label: &'static str,
+    pub detail: &'static str,
+    /// LSP snippet syntax: `${1:x0}` is a placeholder, `$0` the final cursor.
+    pub body: &'static str,
+}
+
+/// Templates for Apple's conventions: the frame record, `@PAGE` addressing,
+/// and Darwin system calls (x16 holds the number, `svc #0x80`).
+pub const SNIPPETS: &[Snippet] = &[
+    Snippet {
+        label: "func",
+        detail: "global function with a frame record",
+        body: ".globl _${1:name}\n.p2align 2\n_${1:name}:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    $0\n    ldp x29, x30, [sp], #16\n    ret",
+    },
+    Snippet {
+        label: "main",
+        detail: "_main, returning 0",
+        body: ".section __TEXT,__text,regular,pure_instructions\n.globl _main\n.p2align 2\n_main:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    $0\n    mov w0, #0\n    ldp x29, x30, [sp], #16\n    ret",
+    },
+    Snippet {
+        label: "prologue",
+        detail: "push the frame record",
+        body: "stp x29, x30, [sp, #-16]!\n    mov x29, sp",
+    },
+    Snippet {
+        label: "epilogue",
+        detail: "pop the frame record and return",
+        body: "ldp x29, x30, [sp], #16\n    ret",
+    },
+    Snippet {
+        label: "addr",
+        detail: "address of a symbol: adrp and add @PAGEOFF",
+        body: "adrp ${1:x0}, ${2:_symbol}@PAGE\n    add ${1:x0}, ${1:x0}, ${2:_symbol}@PAGEOFF",
+    },
+    Snippet {
+        label: "load",
+        detail: "load from a symbol: adrp and ldr @PAGEOFF",
+        body: "adrp ${1:x8}, ${2:_symbol}@PAGE\n    ldr ${3:x0}, [${1:x8}, ${2:_symbol}@PAGEOFF]",
+    },
+    Snippet {
+        label: "got",
+        detail: "address of an external symbol through the GOT",
+        body: "adrp ${1:x0}, ${2:_symbol}@GOTPAGE\n    ldr ${1:x0}, [${1:x0}, ${2:_symbol}@GOTPAGEOFF]",
+    },
+    Snippet {
+        label: "syscall",
+        detail: "Darwin system call: number in x16, svc #0x80",
+        body: "mov x16, #${1:4}\n    svc #0x80",
+    },
+    Snippet {
+        label: "write",
+        detail: "write(fd, buf, len) system call",
+        body: "mov x0, #${1:1}\n    adrp x1, ${2:_msg}@PAGE\n    add x1, x1, ${2:_msg}@PAGEOFF\n    mov x2, #${3:len}\n    mov x16, #4\n    svc #0x80",
+    },
+    Snippet {
+        label: "exit",
+        detail: "exit(status) system call",
+        body: "mov x0, #${1:0}\n    mov x16, #1\n    svc #0x80",
+    },
+    Snippet {
+        label: "loop",
+        detail: "count a register down to zero",
+        body: "1:\n    $0\n    subs ${1:x19}, ${1:x19}, #1\n    b.ne 1b",
+    },
+    Snippet {
+        label: "cstring",
+        detail: "a NUL-terminated string in __cstring",
+        body: ".section __TEXT,__cstring,cstring_literals\n${1:_msg}:\n    .asciz \"${2:text}\"",
+    },
+];
 
 /// Completions at a byte offset: instructions, macros, and directives where a
 /// statement starts, and in operands what the instruction's forms accept
@@ -197,6 +274,14 @@ pub fn completions(analysis: &Analysis, offset: usize, globals: &[String]) -> Ve
                     CompletionKind::Instruction,
                     detail.as_deref(),
                 ));
+            }
+            for snippet in SNIPPETS {
+                out.push(Completion {
+                    label: snippet.label.to_string(),
+                    kind: CompletionKind::Snippet,
+                    detail: Some(snippet.detail.to_string()),
+                    insert: Some(snippet.body.to_string()),
+                });
             }
             for symbol in analysis
                 .symbols()
@@ -293,6 +378,7 @@ fn operand_completions(
                 label,
                 kind,
                 detail,
+                insert: None,
             });
         }
     };
@@ -542,6 +628,7 @@ fn completion(label: String, kind: CompletionKind, detail: Option<&str>) -> Comp
         label,
         kind,
         detail: detail.map(str::to_string),
+        insert: None,
     }
 }
 
@@ -1300,6 +1387,69 @@ mod tests {
         // Macros aren't instructions.
         let text = ".macro m a\n.endm\n  m ";
         assert!(has(&operand_labels(text, &[]), &["x0"]));
+    }
+
+    /// A snippet as inserted with its defaults, and `$0` as `nop`.
+    fn expand(body: &str) -> String {
+        let mut out = String::new();
+        let mut rest = body;
+        while let Some(i) = rest.find('$') {
+            out.push_str(&rest[..i]);
+            rest = &rest[i + 1..];
+            if let Some(inner) = rest.strip_prefix('{') {
+                let end = inner.find('}').expect("closed placeholder");
+                let default = inner[..end].split_once(':').map_or("", |(_, d)| d);
+                out.push_str(default);
+                rest = &inner[end + 1..];
+            } else {
+                assert!(rest.starts_with('0'), "only $0 is bare: {body}");
+                out.push_str("nop");
+                rest = &rest[1..];
+            }
+        }
+        out + rest
+    }
+
+    #[test]
+    fn snippets_expand_to_valid_assembly() {
+        let dir = std::env::temp_dir().join(format!("armls-snippets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        for snippet in SNIPPETS {
+            assert!(!arm_isa::is_instruction(snippet.label), "{}", snippet.label);
+            let body = expand(snippet.body);
+            // Define what the defaults refer to, unless the snippet does.
+            let mut text = "len = 5\n".to_string();
+            for name in ["_name", "_msg", "_symbol"] {
+                if !body.contains(&format!("{name}:")) {
+                    text.push_str(&format!("{name}: nop\n"));
+                }
+            }
+            text.push_str(&format!("    {body}\n"));
+            let analysis = Analysis::new(&text);
+            assert_eq!(analysis.diagnostics(), &[], "{}:\n{text}", snippet.label);
+            if cfg!(target_os = "macos") {
+                let source = dir.join(format!("{}.s", snippet.label));
+                std::fs::write(&source, &text).expect("write");
+                let status = std::process::Command::new("xcrun")
+                    .args(["clang", "-c", "-arch", "arm64", "-o", "/dev/null"])
+                    .arg(&source)
+                    .status()
+                    .expect("clang runs");
+                assert!(status.success(), "clang rejects {}:\n{text}", snippet.label);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        let all = completions(&Analysis::new("  "), 2, &[]);
+        let func = all.iter().find(|c| c.label == "func").expect("func");
+        assert_eq!(func.kind, CompletionKind::Snippet);
+        assert!(
+            func.insert
+                .as_deref()
+                .is_some_and(|b| b.contains("${1:name}"))
+        );
+        // Not after a dot or in operands.
+        assert!(labels("  .", 3).iter().all(|l| l != "func"));
+        assert!(labels("  bl ", 5).iter().all(|l| l != "func"));
     }
 
     #[test]
