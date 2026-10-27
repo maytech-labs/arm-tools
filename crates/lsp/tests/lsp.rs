@@ -240,6 +240,7 @@ fn advertises_capabilities_and_negotiates_encoding() {
         "documentFormattingProvider",
         "codeActionProvider",
         "foldingRangeProvider",
+        "inlayHintProvider",
     ] {
         assert!(!caps[capability].is_null(), "missing {capability}");
     }
@@ -509,6 +510,25 @@ fn inactive_branches_are_greyed_out() {
     assert_eq!(diagnostics[0]["code"], "inactive");
     assert_eq!(diagnostics[0]["severity"], 4);
     assert_eq!(diagnostics[0]["tags"], json!([1]));
+    assert!(client.shutdown().success());
+}
+
+#[test]
+fn inlay_hints() {
+    let mut client = Client::start(true);
+    client.open("LIMIT = 4095\n_f:\n    add x0, x0, #LIMIT\n    mov x16, #1\n    svc #0x80\n");
+    let hints = client.request(
+        "textDocument/inlayHint",
+        json!({ "textDocument": { "uri": URI }, "range": { "start": start(0, 0), "end": start(9, 0) } }),
+    )["result"]
+        .clone();
+    let labels: Vec<&str> = hints
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|h| h["label"].as_str())
+        .collect();
+    assert_eq!(labels, ["= 4095 (0xfff)", "syscall exit"]);
     assert!(client.shutdown().success());
 }
 

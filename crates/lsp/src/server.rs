@@ -13,8 +13,8 @@ use lsp_types::notification::{
 };
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
-    FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest,
-    References, Rename, Request as _, SemanticTokensFullRequest,
+    FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, InlayHintRequest,
+    PrepareRenameRequest, References, Rename, Request as _, SemanticTokensFullRequest,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
@@ -109,6 +109,7 @@ fn capabilities(encoding: Encoding) -> ServerCapabilities {
         document_formatting_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
         folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
+        inlay_hint_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -512,6 +513,27 @@ impl Server<'_> {
                     })
                     .collect();
                 Ok(ok(id, Some(actions)))
+            }
+            InlayHintRequest::METHOD => {
+                let params: lsp_types::InlayHintParams = params(request)?;
+                let result = self.documents.get(&params.text_document.uri).map(|doc| {
+                    ide::inlay_hints(&doc.analysis)
+                        .into_iter()
+                        .map(|(offset, label)| (self.position(&doc.analysis, offset), label))
+                        .filter(|(at, _)| params.range.start <= *at && *at <= params.range.end)
+                        .map(|(position, label)| lsp_types::InlayHint {
+                            position,
+                            label: lsp_types::InlayHintLabel::String(label),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: Some(true),
+                            padding_right: None,
+                            data: None,
+                        })
+                        .collect::<Vec<_>>()
+                });
+                Ok(ok(id, result))
             }
             FoldingRangeRequest::METHOD => {
                 let params: lsp_types::FoldingRangeParams = params(request)?;

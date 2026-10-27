@@ -64,7 +64,7 @@ Done when Neovim and VS Code show diagnostics, hover, definition, references, co
 - [x] Completion, semantic tokens
 - [x] Rename, document highlight
 - [x] Folding ranges and quick-fix code actions ([0021](decisions/0021-quick-fixes.md))
-- [ ] Inlay hints
+- [x] Inlay hints: constant values and syscall names ([0028](decisions/0028-inlay-hints.md))
 - [x] `editors/` setup for Neovim and Helix, `make install`, and `cargo xtask nvim-smoke`
 
 ## M5: linter

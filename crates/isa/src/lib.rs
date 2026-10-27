@@ -17,7 +17,7 @@ mod operand;
 mod predicates;
 mod tables;
 
-pub use docs::directive_description;
+pub use docs::{directive_description, syscall_name};
 pub use features::FeatureSet;
 use generated::*;
 pub use matcher::{MatchResult, Mismatch, match_for, match_instruction};

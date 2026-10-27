@@ -517,6 +517,55 @@ pub fn folding_ranges(analysis: &Analysis) -> Vec<(u32, u32)> {
     out
 }
 
+/// Inlay hints as (byte offset, label): the value after each use of a
+/// constant, and the system call a `mov x16, #n` sets up when an `svc`
+/// follows.
+pub fn inlay_hints(analysis: &Analysis) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for reference in analysis.references() {
+        let Some(symbol) = reference.symbol.map(|s| &analysis.symbols()[s]) else {
+            continue;
+        };
+        if symbol.kind != SymbolKind::Constant {
+            continue;
+        }
+        if let Some(value) = analysis.constant_value(&symbol.name) {
+            let label = if (0..16).contains(&value) {
+                format!("= {value}")
+            } else {
+                format!("= {value} ({value:#x})")
+            };
+            out.push((reference.range.end, label));
+        }
+    }
+    let items = analysis.items();
+    for (i, item) in items.iter().enumerate() {
+        let arm_sema::Item::Instruction(insn) = item else {
+            continue;
+        };
+        let Some(ops) = &insn.operands else {
+            continue;
+        };
+        let is_x16 = matches!(ops.first(), Some(arm_isa::Operand::Register(r))
+            if matches!(r.register.llvm_name(), "X16" | "W16"));
+        let number = match ops.get(1) {
+            Some(arm_isa::Operand::Imm(arm_isa::Imm::Constant(n))) => Some(*n),
+            _ => None,
+        };
+        let svc_follows = items[i + 1..].iter().take(8).any(
+            |item| matches!(item, arm_sema::Item::Instruction(next) if next.mnemonic.head == "svc"),
+        );
+        let name = number.and_then(arm_isa::syscall_name);
+        if let (true, "mov" | "movz", true, Some(name)) =
+            (is_x16, insn.mnemonic.head.as_str(), svc_follows, name)
+        {
+            out.push((insn.range.end, format!("syscall {name}")));
+        }
+    }
+    out.sort_by_key(|(offset, _)| *offset);
+    out
+}
+
 /// Kinds of highlighted token, in the order of the legend `armls` sends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
@@ -886,6 +935,28 @@ mod tests {
         let text = "// one\n// two\n.macro m\n  nop\n.endm\n_f:\n  nop\n  ret\n_g:\n  ret\n";
         let ranges = folding_ranges(&Analysis::new(text));
         assert_eq!(ranges, [(0, 1), (2, 4), (5, 7), (8, 9)]);
+    }
+
+    #[test]
+    fn inlay_hints_show_values_and_syscalls() {
+        let text = "LIMIT = 4095\nsmall = 3\n_f:\n    add x0, x0, #LIMIT\n    mov x1, #small\n    mov x16, #4\n    svc #0x80\n";
+        let hints = inlay_hints(&Analysis::new(text));
+        let labels: Vec<(&str, &str)> = hints
+            .iter()
+            .map(|(at, label)| (&text[..*at], label.as_str()))
+            .map(|(before, label)| (before.lines().last().unwrap_or(""), label))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("    add x0, x0, #LIMIT", "= 4095 (0xfff)"),
+                ("    mov x1, #small", "= 3"),
+                ("    mov x16, #4", "syscall write"),
+            ]
+        );
+        // Redefined constants have no single value; x16 without an svc isn't a syscall.
+        let text = ".set a, 1\n.set a, 2\nmov x0, #a\nmov x16, #4\nret\n";
+        assert!(inlay_hints(&Analysis::new(text)).is_empty());
     }
 
     #[test]

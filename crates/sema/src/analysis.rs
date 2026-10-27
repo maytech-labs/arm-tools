@@ -228,6 +228,20 @@ impl Analysis {
         }
     }
 
+    /// The value of a constant defined exactly once in this file (or once in
+    /// what it includes), if it's known. Redefined constants (`.set` twice)
+    /// have no single value.
+    pub fn constant_value(&self, name: &str) -> Option<i64> {
+        let definitions = self
+            .symbols
+            .iter()
+            .filter(|s| s.kind == SymbolKind::Constant && s.name == name)
+            .count();
+        (definitions == 1)
+            .then(|| self.constants.get(name).copied())
+            .flatten()
+    }
+
     /// Byte ranges of `.if` branches clang skips because their condition is
     /// false. Editors grey them out.
     pub fn inactive(&self) -> &[Range<usize>] {

@@ -197,6 +197,44 @@ fn vector_abi(v: &str) -> &'static str {
     }
 }
 
+/// The name of a Darwin system call by number, for the common ones: what
+/// `svc #0x80` does with that number in x16. From XNU's syscalls.master.
+pub fn syscall_name(number: i64) -> Option<&'static str> {
+    Some(match number {
+        1 => "exit",
+        2 => "fork",
+        3 => "read",
+        4 => "write",
+        5 => "open",
+        6 => "close",
+        7 => "wait4",
+        9 => "link",
+        10 => "unlink",
+        12 => "chdir",
+        15 => "chmod",
+        20 => "getpid",
+        24 => "getuid",
+        37 => "kill",
+        42 => "pipe",
+        54 => "ioctl",
+        59 => "execve",
+        73 => "munmap",
+        74 => "mprotect",
+        97 => "socket",
+        98 => "connect",
+        116 => "gettimeofday",
+        136 => "mkdir",
+        137 => "rmdir",
+        194 => "getrlimit",
+        197 => "mmap",
+        199 => "lseek",
+        202 => "sysctl",
+        338 => "stat64",
+        339 => "fstat64",
+        _ => return None,
+    })
+}
+
 /// What a directive does, for the common ones.
 pub fn directive_description(name: &str) -> Option<&'static str> {
     let name = name.to_ascii_lowercase();
@@ -338,6 +376,13 @@ mod tests {
         assert!(scalar("lr").description().contains("x30"));
         let v0 = Register::lookup_kind("v0", RegisterKind::NeonVector).expect("v0");
         assert!(v0.description().contains("arguments"));
+    }
+
+    #[test]
+    fn syscall_names() {
+        assert_eq!(syscall_name(4), Some("write"));
+        assert_eq!(syscall_name(1), Some("exit"));
+        assert_eq!(syscall_name(99_999), None);
     }
 
     #[test]
