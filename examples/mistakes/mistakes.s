@@ -62,6 +62,18 @@ _clamp:
         mov     x0, #100
         ret                                 ; returns with the caller's x19 changed
 
+        .globl  _report
+        .p2align 2
+_report:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        cmp     x0, #0
+        bl      _puts
+        b.eq    1f                          ; tests _puts's flags, not the cmp
+        mov     x0, #1
+1:      ldp     x29, x30, [sp], #16
+        ret
+
         .type   _main, @function            ; ELF only, quick fix: remove the line
 
         .section __DATA,__data

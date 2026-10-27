@@ -155,6 +155,20 @@ x9 to x17 and v16 to v31 hold nothing useful when a function starts, and every c
 
 Default level: warning.
 
+### `flow/flags-clobbered`
+
+Reads the condition flags after a call that may have changed them
+
+A call doesn't preserve the condition flags (NZCV): `cmp x0, #0`, then `bl _f`, then `b.eq` branches on whatever _f left behind. Compare after the call, or save the result before it with cset and test the register afterward. Calls to helpers in the same file are trusted, since they may return a result in the flags.
+
+```asm
+    cmp     x0, #0
+    bl      _log
+    b.eq    1f          ; tests _log's flags, not the cmp
+```
+
+Default level: warning.
+
 ### `abi/syscall-number`
 
 svc without the syscall number in x16 (Darwin) or x8 (Linux)

@@ -70,6 +70,7 @@ fn mistakes_shows_each_problem() {
         "flow/undefined-register",
         "flow/unbalanced-stack",
         "flow/unreachable",
+        "flow/flags-clobbered",
         "abi/callee-saved",
         "abi/callee-saved-restore",
         "abi/syscall-number",

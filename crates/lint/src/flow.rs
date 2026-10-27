@@ -215,6 +215,56 @@ pub(crate) fn is_terminator(insn: &Instruction) -> bool {
         )
 }
 
+/// Whether an instruction sets the condition flags (NZCV).
+pub(crate) fn sets_flags(insn: &Instruction, platform: arm_isa::Platform) -> bool {
+    let head = insn.mnemonic.head.as_str();
+    matches!(
+        head,
+        "adds" | "subs" | "ands" | "bics" | "adcs" | "sbcs" | "negs" | "ngcs" | "cmp" | "cmn"
+            | "tst" | "ccmp" | "ccmn" | "fcmp" | "fcmpe" | "fccmp" | "fccmpe" | "setf8"
+            | "setf16" | "rmif" | "cfinv" | "axflag" | "xaflag"
+    ) || (head == "msr"
+        && operands(insn)
+            .first()
+            .is_some_and(|o| matches!(o, Operand::Ident(n) if n.eq_ignore_ascii_case("nzcv"))))
+        // Darwin's system calls report errors in the carry flag.
+        || (head == "svc" && platform == arm_isa::Platform::Darwin)
+}
+
+/// Whether an instruction reads the condition flags.
+pub(crate) fn reads_flags(insn: &Instruction) -> bool {
+    let head = insn.mnemonic.head.as_str();
+    insn.mnemonic.condition.is_some()
+        || matches!(
+            head,
+            "csel"
+                | "csinc"
+                | "csinv"
+                | "csneg"
+                | "cset"
+                | "csetm"
+                | "cinc"
+                | "cinv"
+                | "cneg"
+                | "fcsel"
+                | "ccmp"
+                | "ccmn"
+                | "fccmp"
+                | "fccmpe"
+                | "adc"
+                | "adcs"
+                | "sbc"
+                | "sbcs"
+                | "ngc"
+                | "ngcs"
+                | "cfinv"
+        )
+        || (head == "mrs"
+            && operands(insn)
+                .get(1)
+                .is_some_and(|o| matches!(o, Operand::Ident(n) if n.eq_ignore_ascii_case("nzcv"))))
+}
+
 /// Where `svc` takes the system call number: x16 on Darwin, x8 on Linux.
 pub(crate) fn syscall_register(platform: arm_isa::Platform) -> &'static str {
     match platform {

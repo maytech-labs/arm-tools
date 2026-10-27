@@ -83,6 +83,12 @@ pub(crate) const RULES: &[RuleInfo] = &[
         explanation: "x9 to x17 and v16 to v31 hold nothing useful when a function starts, and every call (bl, blr) may overwrite them. Reading one before setting it on every path gets garbage. Set it first, or keep the value in a callee-saved register (x19 to x28) across calls.",
     },
     RuleInfo {
+        id: "flow/flags-clobbered",
+        default_level: Level::Warning,
+        summary: "Reads the condition flags after a call that may have changed them",
+        explanation: "A call doesn't preserve the condition flags (NZCV): `cmp x0, #0`, then `bl _f`, then `b.eq` branches on whatever _f left behind. Compare after the call, or save the result before it with cset and test the register afterward. Calls to helpers in the same file are trusted, since they may return a result in the flags.",
+    },
+    RuleInfo {
         id: "abi/syscall-number",
         default_level: Level::Warning,
         summary: "svc without the syscall number in x16 (Darwin) or x8 (Linux)",
@@ -139,6 +145,7 @@ pub(crate) fn run(analysis: &Analysis) -> Vec<Finding> {
         callee_saved(function, &insns, &mut out);
         callee_saved_restore(analysis, &cfg, function, entry, &insns, &mut out);
         unbalanced_stack(analysis, &cfg, function, entry, &mut out);
+        flags_clobbered(analysis, &cfg, entry, &mut out);
     }
     out
 }
@@ -703,6 +710,64 @@ fn callee_saved_restore(
         for next in cfg.successors(analysis, i).next {
             work.push((next, after.clone()));
         }
+    }
+}
+
+/// Flag reads that a call may have clobbered on some path since the flags
+/// were last set.
+fn flags_clobbered(analysis: &Analysis, cfg: &Cfg, entry: usize, out: &mut Vec<Finding>) {
+    // The call that last clobbered the flags, on some path: None if they're
+    // set (or unknown, as at entry) on every path.
+    let mut before: HashMap<usize, Option<usize>> = HashMap::new();
+    let mut work = vec![(entry, None)];
+    let platform = analysis.platform();
+    while let Some((i, incoming)) = work.pop() {
+        let merged = match (before.get(&i), incoming) {
+            (Some(Some(old)), _) => Some(*old),
+            (_, new) => new,
+        };
+        if before.get(&i) == Some(&merged) {
+            continue;
+        }
+        before.insert(i, merged);
+        let insn = cfg.insns[i];
+        let after = if flow::sets_flags(insn, platform) {
+            None
+        } else if flow::is_call(insn) && !calls_local_helper(analysis, insn) {
+            Some(i)
+        } else if flow::is_call(insn) {
+            // A local helper may return its result in the flags.
+            None
+        } else {
+            merged
+        };
+        for next in cfg.successors(analysis, i).next {
+            work.push((next, after));
+        }
+    }
+    let mut indices: Vec<usize> = before.keys().copied().collect();
+    indices.sort_unstable();
+    for i in indices {
+        let insn = cfg.insns[i];
+        let (true, Some(call)) = (flow::reads_flags(insn), before[&i]) else {
+            continue;
+        };
+        let line = analysis
+            .line_index()
+            .line_col(
+                analysis.text(),
+                cfg.insns[call].range.start,
+                arm_sema::Encoding::Utf8,
+            )
+            .line
+            + 1;
+        out.push(finding(
+            "flow/flags-clobbered",
+            insn.range.clone(),
+            format!(
+                "this reads the condition flags, but the call on line {line} may have changed them: calls don't preserve NZCV. Compare after the call, or save the result with cset before it"
+            ),
+        ));
     }
 }
 
@@ -1332,6 +1397,34 @@ _main:
         assert_eq!(lint_linux(local), []);
         assert_eq!(lint_linux(".data\n.globl x\nx: .word 1\n"), []);
         assert!(rules(bare).iter().all(|r| !r.starts_with("elf/")));
+    }
+
+    #[test]
+    fn flags_clobbered() {
+        let frame = |body: &str| {
+            format!(
+                ".globl _f\n_f:\n  stp x29, x30, [sp, #-16]!\n  mov x29, sp\n{body}  ldp x29, x30, [sp], #16\n  ret\n"
+            )
+        };
+        let after_call = frame("  cmp x0, #0\n  bl _g\n  b.eq 1f\n  mov x0, #1\n1:\n");
+        assert_eq!(
+            findings(&after_call),
+            [("flow/flags-clobbered", "b.eq 1f".to_string())]
+        );
+        // csel and adc read flags too; a compare after the call is fine.
+        let csel = frame("  cmp x0, #0\n  bl _g\n  csel x0, x0, x1, eq\n");
+        assert_eq!(rules(&csel), ["flow/flags-clobbered"]);
+        let fixed = frame("  bl _g\n  cmp x0, #0\n  csel x0, x0, xzr, eq\n");
+        assert_eq!(rules(&fixed), Vec::<&str>::new());
+        // On one path only: still a finding.
+        let one_path = frame("  cmp x0, #0\n  cbz x1, 2f\n  bl _g\n2:\n  cset x0, eq\n");
+        assert_eq!(rules(&one_path), ["flow/flags-clobbered"]);
+        // A local helper may return its result in the flags.
+        let helper = ".globl _f\n_f:\n  stp x29, x30, [sp, #-16]!\n  mov x29, sp\n  bl check\n  cset x0, eq\n  ldp x29, x30, [sp], #16\n  ret\ncheck:\n  cmp x0, #4\n  ret\n";
+        assert_eq!(rules(helper), Vec::<&str>::new());
+        // Darwin's svc sets the carry flag for errors.
+        let svc = ".globl _f\n_f:\n  mov x16, #4\n  svc #0x80\n  b.cs 1f\n  ret\n1:\n  neg x0, x0\n  ret\n";
+        assert_eq!(rules(svc), Vec::<&str>::new());
     }
 
     #[test]

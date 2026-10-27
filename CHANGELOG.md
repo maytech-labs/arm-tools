@@ -68,3 +68,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Lint: LSE atomics (`ldadd`, `swp`, `cas`) read and write the right registers, and a function that never returns, like `_start`, may change callee-saved registers.
 - Lint: `abi/callee-saved-restore` finds a saved register returned changed on some path, and `flow/undefined-register` now covers x2 to x7 and v4 to v7 after calls to other files' functions.
 - Lint on Linux: `elf/gnu-stack` (no `.note.GNU-stack`, so an executable stack) and `elf/function-symbol` (exported functions without `.type` or `.size`), each with a quick fix.
+- Lint: `flow/flags-clobbered` finds condition-flag reads (`b.eq`, `csel`, `adc`) after a call that may have changed the flags.
