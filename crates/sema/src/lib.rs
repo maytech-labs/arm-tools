@@ -6,11 +6,13 @@ mod diagnostic;
 mod line_index;
 mod macros;
 mod operands;
+mod preprocess;
 mod resolver;
 mod suggest;
 
 pub use analysis::{Analysis, Instruction, Item, Origin, Reference, Resolver, Symbol, SymbolKind};
 pub use diagnostic::{Diagnostic, Fix, Severity};
 pub use line_index::{Encoding, LineCol, LineIndex};
+pub use preprocess::{Preprocessed, needs_preprocessing, preprocess};
 pub use resolver::{FsResolver, canonical, normalize};
 pub use suggest::suggest;

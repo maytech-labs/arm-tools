@@ -35,3 +35,4 @@
 - [0024 Macro and repeat expansion: check what clang assembles, report it at the call](decisions/0024-macro-expansion.md)
 - [0025 Distribution: a Homebrew formula in this repo, and a thin VS Code extension](decisions/0025-distribution.md)
 - [0026 Dataflow rules report only what holds on every path](decisions/0026-dataflow-rules.md)
+- [0027 `.S` files: diagnostics from clang's preprocessor output, editing on the text as written](decisions/0027-preprocessed-files.md)

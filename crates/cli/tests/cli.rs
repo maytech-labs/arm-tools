@@ -269,6 +269,28 @@ fn target_features_follow_the_config() {
 }
 
 #[test]
+fn capital_s_files_are_preprocessed() {
+    if !cfg!(target_os = "macos") {
+        return eprintln!("skipped: needs xcrun clang");
+    }
+    let dir = Dir::new("cpp");
+    dir.file("defs.h", "#define LIMIT 4095\n");
+    let clean = "#include \"defs.h\"\n#define CALL(f) bl f\n.globl _f\n_f:\n#if 0\n    frob junk\n#endif\n    mov x0, #LIMIT\n    ret\n";
+    dir.file("ok.S", clean);
+    let output = armtool(&["check", "ok.S"], &dir.0);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    // A real error maps back to its line and column in the original.
+    dir.file(
+        "bad.S",
+        "#include \"defs.h\"\n.globl _f\n_f:\n    add x0, x0, #LIMIT + 2\n    ret\n",
+    );
+    let output = armtool(&["check", "bad.S"], &dir.0);
+    let text = stdout(&output);
+    assert!(text.starts_with("bad.S:4:"), "{text}");
+    assert!(text.contains("invalid-operand"), "{text}");
+}
+
+#[test]
 fn rules_and_explain() {
     let dir = Dir::new("rules");
     let output = armtool(&["rules"], &dir.0);

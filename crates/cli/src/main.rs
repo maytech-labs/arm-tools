@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use arm_lint::Config;
-use arm_sema::{Analysis, Diagnostic, Encoding, Severity};
+use arm_sema::{Diagnostic, Encoding, Severity};
 
 const HELP: &str = "\
 armtool: check and lint AArch64 assembly for macOS
@@ -168,23 +168,9 @@ fn run(args: &[String], lint: bool) -> ExitCode {
             }
         };
         let path = arm_sema::normalize(&std::env::current_dir().unwrap_or_default().join(file));
-        let resolver = arm_sema::FsResolver {
-            dirs: config.include_dirs(&path),
-            open: Default::default(),
-        };
         let diagnose = |text: &str| {
-            let analysis = Analysis::with_options(
-                text,
-                Some(path.clone()),
-                Some(&resolver),
-                Some(config.features.clone()),
-            );
-            let mut diagnostics: Vec<Diagnostic> = analysis.diagnostics().to_vec();
-            if lint {
-                diagnostics.extend(arm_lint::lint(&analysis, &config));
-                diagnostics.sort_by_key(|d| (d.range.start, d.range.end));
-            }
-            (analysis, diagnostics)
+            let checked = arm_lint::check(text, Some(&path), &config, Default::default(), lint);
+            (checked.analysis, checked.diagnostics)
         };
         let (mut analysis, mut diagnostics) = diagnose(&text);
         let mut text = text;

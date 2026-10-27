@@ -222,37 +222,28 @@ impl Server<'_> {
             Some(dir) => arm_lint::Config::discover(dir),
             None => Ok(arm_lint::Config::default()),
         };
-        // A broken config still gets clang's default target.
-        let features = config.as_ref().map_or_else(
-            |_| arm_isa::FeatureSet::apple_default(),
-            |c| c.features.clone(),
-        );
-        let analysis = match &path {
-            Some(path) => {
-                let dirs = config.as_ref().map_or_else(
-                    |_| arm_lint::Config::default().include_dirs(path),
-                    |c| c.include_dirs(path),
-                );
-                let open = self
-                    .documents
-                    .iter()
-                    .filter_map(|(u, d)| Some((file_path(u)?, d.analysis.text().to_string())))
-                    .collect();
-                let resolver = arm_sema::FsResolver { dirs, open };
-                Analysis::with_options(text, Some(path.clone()), Some(&resolver), Some(features))
-            }
-            None => Analysis::with_options(text, None, None, Some(features)),
+        let open = self
+            .documents
+            .iter()
+            .filter_map(|(u, d)| Some((file_path(u)?, d.analysis.text().to_string())))
+            .collect();
+        // A broken config is shown, and the file is still checked with the
+        // defaults, without lint rules.
+        let (config, lint, config_error) = match config {
+            Ok(config) => (config, true, None),
+            Err(error) => (arm_lint::Config::default(), false, Some(error)),
         };
-        let mut found: Vec<arm_sema::Diagnostic> = analysis.diagnostics().to_vec();
-        match config {
-            Ok(config) => found.extend(arm_lint::lint(&analysis, &config)),
-            Err(error) => found.push(arm_sema::Diagnostic {
+        let checked = arm_lint::check(text, path.as_deref(), &config, open, lint);
+        let analysis = checked.analysis;
+        let mut found = checked.diagnostics;
+        if let Some(error) = config_error {
+            found.push(arm_sema::Diagnostic {
                 range: 0..0,
                 severity: Severity::Warning,
                 code: "config",
                 message: format!("{error}. Lint rules are off until it's fixed."),
                 fix: None,
-            }),
+            });
         }
         // Branches clang skips, for editors to grey out.
         for range in analysis.inactive() {

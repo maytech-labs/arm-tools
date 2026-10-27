@@ -51,7 +51,7 @@ Done when go to definition would work for every symbol in the corpus, macros exp
 - [x] Conditional assembly: conditions evaluated, skipped branches greyed out ([0023](decisions/0023-conditional-assembly.md))
 - [x] `.include`, with `[include] paths` in armtool.toml ([0019](decisions/0019-includes.md))
 - [x] Operand checking against `arm-isa`
-- [ ] `.S` files: decide how to handle the C preprocessor
+- [x] `.S` files: diagnostics through clang's preprocessor, mapped back ([0027](decisions/0027-preprocessed-files.md))
 
 ## M4: language server v1
 
