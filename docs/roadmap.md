@@ -1,0 +1,81 @@
+# Roadmap
+
+Milestones in order. Each has a "done when" bar. Check items off in the change that finishes them.
+
+## M0: scaffold
+
+Done when the workspace builds, `cargo xtask check` passes, and the docs and decisions are in place.
+
+- [x] Cargo workspace with the six crates and `xtask`
+- [x] AGENTS.md, README, CHANGELOG, design, roadmap
+- [x] ADRs 0001 to 0010
+- [x] CI on macOS and Linux
+- [ ] GitHub repo and first push
+
+## M1: syntax
+
+**Done 2026-10-26.** Done when every `.s` file in the fixture corpus round-trips byte for byte, and the parser agrees with clang on which lines have syntax errors.
+
+- [x] Lexer: tokens for every byte, comments, separators, numbers, strings, local label references
+- [x] Lossless tree on `rowan`
+- [x] Parser: labels, directives, instructions, macro calls, operand expressions
+- [x] Error recovery at statement boundaries
+- [x] Fixture corpus: hand-written cases and compiler output from `clang -S`
+- [x] Hand-written code in the corpus: HelloSilicon samples and macro, alias, and repeat cases
+- [x] `cargo xtask survey`: zero disagreements with clang on LLVM's AArch64 MC tests
+- [x] Oracle tests against `clang -c -arch arm64`
+
+## M2: ISA
+
+Done when every instruction clang accepts in the corpus matches exactly one form, and a sample of invalid operands gets a message naming the expected form.
+
+- [x] Decide the source of the tables ([0013](decisions/0013-isa-from-llvm-tablegen.md)): spike measured 97.7% mnemonic coverage before aliases
+- [ ] `cargo xtask gen-isa` and checked-in tables
+- [ ] Register classes, operand forms, immediate encodability (logical immediates, shifted imm12, etc.)
+- [ ] Hand-written table of C++-parser aliases (`ubfx`, `bfi`, `bne`...) and SYS aliases, each tested against clang
+- [ ] Hover text: our descriptions in `crates/isa/data/descriptions.toml`, common instructions first
+
+## M3: sema
+
+Done when go to definition would work for every symbol in the corpus, macros expand, and conditional blocks resolve.
+
+- [ ] Symbol table and references
+- [ ] Local numeric labels
+- [ ] Macros, `.rept`, `.irp`
+- [ ] Conditional assembly
+- [ ] `.include`
+- [ ] Operand checking against `arm-isa`
+- [ ] `.S` files: decide how to handle the C preprocessor
+
+## M4: language server v1
+
+Done when Neovim and VS Code show diagnostics, hover, definition, references, completion, symbols, and semantic tokens on the corpus, with no panics under a fuzzed edit session.
+
+- [ ] Server loop, document store, position encoding
+- [ ] Diagnostics, hover, definition, references, symbols
+- [ ] Completion, semantic tokens
+- [ ] Rename, folding, inlay hints
+- [ ] `editors/` setup for Neovim and VS Code
+
+## M5: linter
+
+Done when the first rules in the design run in `armls` and `armtool lint`, each with tests and a doc page, and none fires falsely on the corpus.
+
+- [ ] Rule engine, IDs, severities, `armtool.toml`, inline allows
+- [ ] Per-function CFG
+- [ ] The first rules from [design.md](design.md#lint)
+- [ ] `armtool lint --json` and code actions for fixes
+
+## M6: formatter
+
+- [ ] `armtool fmt` and LSP formatting: column alignment for mnemonics, operands, and comments
+
+## M7: deeper analysis
+
+- [ ] Register liveness and dataflow lints
+- [ ] Darwin syscall argument checks
+
+## M8: distribution
+
+- [ ] `make install`, Homebrew formula, GitHub releases
+- [ ] VS Code Marketplace extension, Helix and Zed configs
