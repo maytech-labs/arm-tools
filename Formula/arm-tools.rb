@@ -1,5 +1,6 @@
 # Homebrew formula for armls and armtool. This repo is its own tap:
 #   brew tap maytech-labs/arm-tools https://github.com/maytech-labs/arm-tools
+#   brew trust maytech-labs/arm-tools
 #   brew install --HEAD arm-tools
 # HEAD-only until the first release (docs/decisions/0025-distribution.md).
 class ArmTools < Formula

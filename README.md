@@ -32,6 +32,7 @@ With Homebrew, once the repo is public (builds the latest `main`):
 
 ```sh
 brew tap maytech-labs/arm-tools https://github.com/maytech-labs/arm-tools
+brew trust maytech-labs/arm-tools
 brew install --HEAD arm-tools
 ```
 
