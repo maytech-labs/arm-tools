@@ -4,6 +4,9 @@
 //! [rules]
 //! "abi/x18-reserved" = "error"
 //! "style/unused-label" = "off"
+//!
+//! [include]
+//! paths = ["include", "../shared"]   # relative to this file
 //! ```
 
 use std::collections::HashMap;
@@ -27,6 +30,8 @@ pub enum Level {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Config {
     levels: HashMap<String, Level>,
+    /// Directories to search for `.include` files, as written.
+    include: Vec<PathBuf>,
     /// Where it was read from, if anywhere.
     pub path: Option<PathBuf>,
 }
@@ -36,6 +41,15 @@ pub struct Config {
 struct File {
     #[serde(default)]
     rules: HashMap<String, Level>,
+    #[serde(default)]
+    include: IncludeSection,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct IncludeSection {
+    #[serde(default)]
+    paths: Vec<PathBuf>,
 }
 
 pub const FILE_NAME: &str = "armtool.toml";
@@ -59,6 +73,7 @@ impl Config {
         }
         Ok(Config {
             levels: file.rules,
+            include: file.include.paths,
             path: None,
         })
     }
@@ -78,6 +93,35 @@ impl Config {
             }
         }
         Ok(Config::default())
+    }
+
+    /// Where to look for a file's `.include`s, in order: the configured
+    /// paths, the project root (the config file's directory, or the nearest
+    /// one with `.git`), then the file's own directory.
+    pub fn include_dirs(&self, file: &Path) -> Vec<PathBuf> {
+        let file_dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let config_dir = self
+            .path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+        let root = config_dir.clone().or_else(|| {
+            file_dir
+                .ancestors()
+                .find(|d| d.join(".git").exists())
+                .map(Path::to_path_buf)
+        });
+        let base = config_dir.unwrap_or_else(|| file_dir.clone());
+        let mut dirs: Vec<PathBuf> = self.include.iter().map(|p| base.join(p)).collect();
+        dirs.extend(root);
+        dirs.push(file_dir);
+        let mut seen = Vec::new();
+        dirs.retain(|d| {
+            let fresh = !seen.contains(d);
+            seen.push(d.clone());
+            fresh
+        });
+        dirs
     }
 
     /// The level for a rule: the file's setting, or the rule's default.
@@ -118,6 +162,25 @@ mod tests {
         assert!(level.contains("Levels are"), "{level}");
         let section = Config::parse("[rulez]\n").unwrap_err();
         assert!(!section.is_empty());
+    }
+
+    #[test]
+    fn include_dirs_in_order() {
+        let mut config =
+            Config::parse("[include]\npaths = [\"inc\", \"../shared\"]\n").expect("valid");
+        config.path = Some(PathBuf::from("/proj/armtool.toml"));
+        assert_eq!(
+            config.include_dirs(Path::new("/proj/src/a.s")),
+            [
+                PathBuf::from("/proj/inc"),
+                PathBuf::from("/proj/../shared"),
+                PathBuf::from("/proj"),
+                PathBuf::from("/proj/src"),
+            ]
+        );
+        // Without a config, the file's directory.
+        let dirs = Config::default().include_dirs(Path::new("/no/git/here/a.s"));
+        assert_eq!(dirs.last(), Some(&PathBuf::from("/no/git/here")));
     }
 
     #[test]

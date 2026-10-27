@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use arm_isa::{CONDITION_CODES, Mnemonic};
 use arm_syntax::ast::{self, Statement};
@@ -40,7 +42,26 @@ pub struct Symbol {
     pub exported: bool,
     /// For register aliases: where `.unreq` ends it.
     pub scope_end: Option<usize>,
+    /// For symbols from an included file: that file. `range` and `statement`
+    /// are offsets in its text. None for symbols defined in this file.
+    pub origin: Option<Arc<Origin>>,
 }
+
+/// A file that symbols were imported from with `.include`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Origin {
+    pub path: PathBuf,
+    pub text: String,
+}
+
+/// Finds the files that `.include` names.
+pub trait Resolver {
+    /// The path and text of an included file, from its name as written.
+    fn resolve(&self, name: &str) -> Option<(PathBuf, String)>;
+}
+
+/// How deep includes may nest before the analysis stops following them.
+const MAX_INCLUDE_DEPTH: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference {
@@ -94,12 +115,31 @@ pub struct Analysis {
     references: Vec<Reference>,
     diagnostics: Vec<Diagnostic>,
     items: Vec<Item>,
+    /// Constants with known values at the end of the file, for files that
+    /// include this one.
+    constants: HashMap<String, i64>,
+    /// Register aliases in scope at the end of the file.
+    aliases: HashMap<String, String>,
 }
 
 impl Analysis {
+    /// Analyzes a file on its own: `.include` isn't followed.
     pub fn new(text: &str) -> Analysis {
+        Analysis::build(text, None, Vec::new())
+    }
+
+    /// Analyzes a file, following `.include` through `resolver` and importing
+    /// what included files define: macros, constants, register aliases, and
+    /// labels. `path` is this file's, to detect include cycles.
+    pub fn with_includes(text: &str, path: Option<PathBuf>, resolver: &dyn Resolver) -> Analysis {
+        Analysis::build(text, Some(resolver), path.into_iter().collect())
+    }
+
+    fn build(text: &str, resolver: Option<&dyn Resolver>, stack: Vec<PathBuf>) -> Analysis {
         let parse = arm_syntax::parse(text);
         let mut builder = Builder {
+            resolver,
+            stack,
             symbols: Vec::new(),
             items: Vec::new(),
             pending: Vec::new(),
@@ -135,6 +175,8 @@ impl Analysis {
             references,
             diagnostics,
             items: builder.items,
+            constants: builder.constants,
+            aliases: builder.aliases,
         }
     }
 
@@ -175,7 +217,7 @@ impl Analysis {
         let touches = |r: &Range<usize>| r.start <= offset && offset <= r.end;
         self.symbols
             .iter()
-            .position(|s| touches(&s.range))
+            .position(|s| s.origin.is_none() && touches(&s.range))
             .or_else(|| {
                 self.references
                     .iter()
@@ -230,7 +272,10 @@ struct Pending {
     macro_only: bool,
 }
 
-struct Builder {
+struct Builder<'r> {
+    resolver: Option<&'r dyn Resolver>,
+    /// Paths of the files including this one, outermost first, and this one.
+    stack: Vec<PathBuf>,
     symbols: Vec<Symbol>,
     items: Vec<Item>,
     pending: Vec<Pending>,
@@ -253,7 +298,7 @@ struct Builder {
     later_macros: Vec<String>,
 }
 
-impl Builder {
+impl Builder<'_> {
     fn in_body(&self) -> bool {
         self.blocks.iter().any(|b| b.kind != BlockKind::Conditional)
     }
@@ -298,6 +343,7 @@ impl Builder {
                         statement: node_range(alias.syntax()),
                         exported: false,
                         scope_end: None,
+                        origin: None,
                     });
                 }
             }
@@ -315,6 +361,25 @@ impl Builder {
                 self.collect_refs(call.syntax());
             }
             Statement::Instruction(insn) => {
+                // A call to a macro from an included file: the parser couldn't
+                // know it was a macro.
+                let imported_macro = insn.mnemonic().filter(|m| {
+                    self.symbols.iter().any(|s| {
+                        s.kind == SymbolKind::Macro && s.origin.is_some() && s.name == m.text()
+                    })
+                });
+                if let Some(name) = imported_macro {
+                    if !in_body {
+                        self.items.push(Item::MacroCall(node_range(insn.syntax())));
+                    }
+                    self.pending.push(Pending {
+                        name: name.text().to_string(),
+                        range: range(&name),
+                        macro_only: true,
+                    });
+                    self.collect_refs(insn.syntax());
+                    return;
+                }
                 if let Some(mnemonic) = insn.mnemonic().filter(|_| !in_body) {
                     let checkable = self.check_mnemonic(&mnemonic);
                     let flat = if checkable {
@@ -364,6 +429,7 @@ impl Builder {
             statement: node_range(label.syntax()),
             exported: false,
             scope_end: None,
+            origin: None,
         });
     }
 
@@ -397,6 +463,7 @@ impl Builder {
                         statement: node_range(directive.syntax()),
                         exported: false,
                         scope_end: None,
+                        origin: None,
                     });
                 }
                 self.open(BlockKind::Macro, &name, &name_token);
@@ -442,7 +509,7 @@ impl Builder {
             ));
         }
         match name.as_str() {
-            ".include" => self.has_include = true,
+            ".include" => self.include(directive, &args, &name_token),
             ".set" | ".equ" | ".equiv" => {
                 if let Some(constant) = &first_name {
                     self.define_constant(constant, directive.syntax(), name == ".equiv");
@@ -487,6 +554,75 @@ impl Builder {
         self.collect_refs(directive.syntax());
     }
 
+    /// Follows `.include "file"`, importing what the file defines.
+    fn include(&mut self, directive: &ast::Directive, args: &[SyntaxNode], name: &SyntaxToken) {
+        let target = args.first().and_then(|a| {
+            a.children_with_tokens()
+                .filter_map(|e| e.into_token())
+                .find(|t| t.kind() == SyntaxKind::StringLit)
+                .map(|t| unquote(t.text()))
+        });
+        let (Some(resolver), Some(target)) = (self.resolver, target) else {
+            self.has_include = true;
+            return;
+        };
+        let at = node_range(directive.syntax()).start..range(name).end;
+        let Some((path, text)) = resolver.resolve(&target) else {
+            self.has_include = true;
+            self.diagnostics.push(Diagnostic {
+                range: at,
+                severity: Severity::Warning,
+                code: "include-not-found",
+                message: format!(
+                    "can't find '{target}' from the project root, the [include] paths in armtool.toml, or this file's directory. Clang looks relative to the directory it runs in and -I paths: add the directory to [include] paths"
+                ),
+            });
+            return;
+        };
+        let key = crate::canonical(&path);
+        if let Some(start) = self.stack.iter().position(|p| crate::canonical(p) == key) {
+            let mut chain: Vec<String> = self.stack[start..]
+                .iter()
+                .map(|p| {
+                    p.file_name().map_or_else(
+                        || p.display().to_string(),
+                        |n| n.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect();
+            chain.push(chain[0].clone());
+            self.diagnostics.push(Diagnostic::error(
+                at,
+                "include-cycle",
+                format!(
+                    "include cycle: {}. Clang loops forever on this: remove one of the includes",
+                    chain.join(" includes ")
+                ),
+            ));
+            return;
+        }
+        if self.stack.len() >= MAX_INCLUDE_DEPTH {
+            return;
+        }
+        let mut stack = self.stack.clone();
+        stack.push(path.clone());
+        let included = Analysis::build(&text, self.resolver, stack);
+        let origin = Arc::new(Origin { path, text });
+        for symbol in included.symbols {
+            let importable = match symbol.kind {
+                SymbolKind::LocalLabel => false,
+                SymbolKind::RegisterAlias => symbol.scope_end.is_none(),
+                _ => true,
+            };
+            if importable {
+                let origin = symbol.origin.clone().or_else(|| Some(origin.clone()));
+                self.symbols.push(Symbol { origin, ..symbol });
+            }
+        }
+        self.constants.extend(included.constants);
+        self.aliases.extend(included.aliases);
+    }
+
     fn define_constant(&mut self, name: &SyntaxToken, statement: &SyntaxNode, equiv: bool) {
         let text = unquote(name.text());
         let clash = self.find(&text, SymbolKind::Label).is_some()
@@ -505,6 +641,7 @@ impl Builder {
             statement: node_range(statement),
             exported: false,
             scope_end: None,
+            origin: None,
         });
     }
 

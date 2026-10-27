@@ -12,6 +12,13 @@ Put an `armtool.toml` at your project root. `armtool` and `armls` use the neares
 "style/unused-label" = "off"
 ```
 
+The same file tells `armtool` and `armls` where to find `.include` files, searched in this order before the project root and the including file's directory ([0019](decisions/0019-includes.md)):
+
+```toml
+[include]
+paths = ["include", "../shared"]   # relative to armtool.toml
+```
+
 Silence one finding with a comment on its line, or on the line above:
 
 ```asm

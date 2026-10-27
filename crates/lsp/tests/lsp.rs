@@ -362,6 +362,66 @@ fn lint_rules_run_with_the_nearest_config() {
 }
 
 #[test]
+fn includes_resolve_across_files_and_unsaved_edits() {
+    let dir = std::env::temp_dir().join(format!("armls-includes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("armtool.toml"), "").expect("config");
+    let macros = ".macro zeroreg r\n    mov \\r, #0\n.endm\n";
+    std::fs::write(dir.join("macros.s"), macros).expect("macros");
+    let main_uri = format!("file://{}/main.s", dir.display());
+    let macros_uri = format!("file://{}/macros.s", dir.display());
+    let main = ".include \"macros.s\"\n.globl _f\n_f:\n    zeroreg x0\n    ret\n";
+    let mut client = Client::start(true);
+    let open = |client: &mut Client, uri: &str, text: &str| {
+        client.notify(
+            "textDocument/didOpen",
+            json!({ "textDocument": { "uri": uri, "languageId": "asm", "version": 1, "text": text } }),
+        );
+    };
+    let diagnostics_for = |client: &mut Client, uri: &str| loop {
+        let message = client.receive();
+        if message["method"] == "textDocument/publishDiagnostics" && message["params"]["uri"] == uri
+        {
+            return message["params"]["diagnostics"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+        }
+    };
+    open(&mut client, &main_uri, main);
+    assert_eq!(diagnostics_for(&mut client, &main_uri), Vec::<Value>::new());
+
+    // Go to definition on the macro call lands in macros.s. (`zero` alone is
+    // an SME instruction, hence the longer name.)
+    let definition = client.request(
+        "textDocument/definition",
+        json!({ "textDocument": { "uri": main_uri }, "position": { "line": 3, "character": 5 } }),
+    )["result"]
+        .clone();
+    assert_eq!(definition["uri"], macros_uri.as_str());
+    assert_eq!(definition["range"]["start"], start(0, 7));
+
+    // Editing macros.s without saving updates main.s.
+    open(&mut client, &macros_uri, macros);
+    let _ = diagnostics_for(&mut client, &macros_uri);
+    client.notify(
+        "textDocument/didChange",
+        json!({
+            "textDocument": { "uri": macros_uri, "version": 2 },
+            "contentChanges": [{ "text": ".macro clear r\n.endm\n" }],
+        }),
+    );
+    let _ = diagnostics_for(&mut client, &macros_uri);
+    let main_now = diagnostics_for(&mut client, &main_uri);
+    assert!(
+        main_now.iter().any(|d| d["code"] == "unknown-instruction"),
+        "{main_now:?}"
+    );
+    assert!(client.shutdown().success());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn hover() {
     let mut client = Client::start(true);
     client.open("_f: ldp x29, x30, [sp], #16\n    b _f\n");

@@ -29,5 +29,6 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `arm-lint`: 11 rules for Apple's ABI, address materialization, and control flow, with `armtool.toml` levels and `; armtool: allow(rule)` comments. Rule reference in docs/lint.md.
 - `armtool check`, `lint` (with `--json`), `rules`, and `explain`. Exit codes 0 clean, 1 findings, 2 usage or config problems.
 - armls publishes lint findings, using the nearest `armtool.toml`.
-- Design doc, roadmap, and ADRs 0001 to 0018.
+- `.include` is followed: included macros, constants, aliases, and labels are known, with go to definition across files and unsaved buffers in armls. `[include] paths` in armtool.toml. Include cycles are errors; missing includes are warnings.
+- Design doc, roadmap, and ADRs 0001 to 0019.
 - `cargo xtask check` and CI on macOS and Linux.

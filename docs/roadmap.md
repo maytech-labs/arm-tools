@@ -49,7 +49,7 @@ Done when go to definition would work for every symbol in the corpus, macros exp
 - [x] Block structure, duplicate symbols, unknown instructions and directives, with suggestions ([0015](decisions/0015-sema-file-model.md))
 - [ ] Macros, `.rept`, `.irp`
 - [ ] Conditional assembly
-- [ ] `.include`
+- [x] `.include`, with `[include] paths` in armtool.toml ([0019](decisions/0019-includes.md))
 - [x] Operand checking against `arm-isa`
 - [ ] `.S` files: decide how to handle the C preprocessor
 

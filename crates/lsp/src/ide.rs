@@ -114,17 +114,24 @@ fn symbol_hover(analysis: &Analysis, symbol: &Symbol) -> String {
         SymbolKind::RegisterAlias => "register alias",
         SymbolKind::Macro => "macro",
     };
-    // The whole source line of the definition: a label's own node is only `_f:`.
-    let text = analysis.text();
+    // The whole source line of the definition: a label's own node is only
+    // `_f:`. Symbols from included files show their own file's line.
+    let text = symbol
+        .origin
+        .as_ref()
+        .map_or(analysis.text(), |o| o.text.as_str());
     let start = text[..symbol.range.start].rfind('\n').map_or(0, |i| i + 1);
     let end = text[start..].find('\n').map_or(text.len(), |i| start + i);
     let line = text[start..end].trim();
     let index = analysis.symbols().iter().position(|s| s == symbol);
     let uses = index.map_or(0, |i| analysis.references_to(i).count());
-    let uses = match uses {
+    let mut uses = match uses {
         1 => "1 use".to_string(),
         n => format!("{n} uses"),
     };
+    if let Some(name) = symbol.origin.as_ref().and_then(|o| o.path.file_name()) {
+        uses.push_str(&format!(", from {}", name.to_string_lossy()));
+    }
     format!(
         "**{}** ({kind}, {uses})\n\n```asm\n{line}\n```",
         symbol.name
@@ -283,10 +290,21 @@ fn in_comment_or_string(analysis: &Analysis, offset: usize) -> bool {
     })
 }
 
+/// Where a symbol is defined: a range in this file, or in an included one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Definition {
+    pub range: Range<usize>,
+    /// The included file it's in, with that file's text; None for this file.
+    pub origin: Option<std::sync::Arc<arm_sema::Origin>>,
+}
+
 /// Where the symbol at `offset` is defined.
-pub fn definition(analysis: &Analysis, offset: usize) -> Option<Range<usize>> {
-    let symbol = analysis.symbol_at(offset)?;
-    Some(analysis.symbols()[symbol].range.clone())
+pub fn definition(analysis: &Analysis, offset: usize) -> Option<Definition> {
+    let symbol = &analysis.symbols()[analysis.symbol_at(offset)?];
+    Some(Definition {
+        range: symbol.range.clone(),
+        origin: symbol.origin.clone(),
+    })
 }
 
 /// Every use of the symbol at `offset`, and its definition if asked. For a
@@ -298,7 +316,8 @@ pub fn references(
 ) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     if let Some(symbol) = analysis.symbol_at(offset) {
-        if include_definition {
+        // A definition in an included file isn't in this file's ranges.
+        if include_definition && analysis.symbols()[symbol].origin.is_none() {
             out.push(analysis.symbols()[symbol].range.clone());
         }
         out.extend(analysis.references_to(symbol).map(|r| r.range.clone()));
@@ -325,6 +344,12 @@ pub fn prepare_rename(analysis: &Analysis, offset: usize) -> Result<Range<usize>
     )?;
     if analysis.symbols()[symbol].kind == SymbolKind::LocalLabel {
         return Err("local numeric labels can't be renamed: change the number by hand".into());
+    }
+    if let Some(origin) = &analysis.symbols()[symbol].origin {
+        return Err(format!(
+            "this is defined in {}: rename it there",
+            origin.path.display()
+        ));
     }
     let token = word_at(analysis, offset).ok_or("no name here")?;
     Ok(token_range(&token))
@@ -389,7 +414,7 @@ pub fn outline(analysis: &Analysis) -> Vec<OutlineItem> {
     let symbols: Vec<&Symbol> = analysis
         .symbols()
         .iter()
-        .filter(|s| s.kind != SymbolKind::LocalLabel)
+        .filter(|s| s.kind != SymbolKind::LocalLabel && s.origin.is_none())
         .collect();
     let mut items = Vec::new();
     for (i, symbol) in symbols.iter().enumerate() {
@@ -499,7 +524,11 @@ pub fn semantic_tokens(analysis: &Analysis) -> Vec<HighlightToken> {
 fn string_or_symbol(analysis: &Analysis, token: &SyntaxToken) -> (TokenType, u32) {
     // A quoted label or symbol, like `"_f g":`, is a name, not a string.
     let start = token_range(token).start;
-    match analysis.symbols().iter().find(|s| s.range.start == start) {
+    match analysis
+        .symbols()
+        .iter()
+        .find(|s| s.origin.is_none() && s.range.start == start)
+    {
         Some(_) => (TokenType::Function, DECLARATION),
         None if analysis.reference_at(start).is_some() => (TokenType::Function, 0),
         None => (TokenType::String, 0),
@@ -522,7 +551,11 @@ fn classify_ident(analysis: &Analysis, token: &SyntaxToken) -> Option<(TokenType
         SyntaxKind::Variant => return Some((TokenType::Decorator, 0)),
         _ => {}
     }
-    if let Some(symbol) = analysis.symbols().iter().find(|s| s.range.start == start) {
+    if let Some(symbol) = analysis
+        .symbols()
+        .iter()
+        .find(|s| s.origin.is_none() && s.range.start == start)
+    {
         return Some((
             symbol_type(symbol.kind),
             DECLARATION | symbol_modifiers(symbol.kind),
@@ -704,7 +737,7 @@ mod tests {
         let text = "b _f\n_f: nop\nbl _f\nbl _printf\nbl _printf\n";
         let analysis = Analysis::new(text);
         let use_ = at(text, "_f\n");
-        assert_eq!(definition(&analysis, use_), Some(5..7));
+        assert_eq!(definition(&analysis, use_).map(|d| d.range), Some(5..7));
         assert_eq!(references(&analysis, use_, false).len(), 2);
         assert_eq!(references(&analysis, use_, true).len(), 3);
         // An external symbol's uses are found by name.

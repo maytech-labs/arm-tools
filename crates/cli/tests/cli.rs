@@ -167,6 +167,37 @@ fn allow_comments() {
 }
 
 #[test]
+fn includes_follow_the_configured_paths() {
+    let dir = Dir::new("includes");
+    dir.file(
+        "inc/macros.s",
+        ".macro zero r\n    mov \\r, #0\n.endm\nbig = 4097\n",
+    );
+    dir.file(
+        "src/a.s",
+        ".include \"macros.s\"\n.globl _f\n_f:\n    zero x0\n    ret\n",
+    );
+    // Without the include path, the macro is unknown and the include missing.
+    let output = armtool(&["check", "src/a.s"], &dir.0);
+    assert!(
+        stdout(&output).contains("include-not-found"),
+        "{}",
+        stdout(&output)
+    );
+    dir.file("armtool.toml", "[include]\npaths = [\"inc\"]\n");
+    let output = armtool(&["check", "src/a.s"], &dir.0);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    // Imported constants are checked as values.
+    dir.file("src/b.s", ".include \"macros.s\"\n    add x0, x0, #big\n");
+    let output = armtool(&["check", "src/b.s"], &dir.0);
+    assert!(
+        stdout(&output).contains("invalid-operand"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
 fn rules_and_explain() {
     let dir = Dir::new("rules");
     let output = armtool(&["rules"], &dir.0);

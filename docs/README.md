@@ -27,3 +27,4 @@
 - [0016 armls v1: features before operand checking, full sync, and a fixed token legend](decisions/0016-armls-v1.md)
 - [0017 Operand checking: clang's operand model, ported predicates, and permissive gaps](decisions/0017-operand-matching.md)
 - [0018 The linter: rules over the semantic model, a control-flow graph, and quiet when unsure](decisions/0018-lint.md)
+- [0019 Following `.include`: import definitions, search like clang but forgive the working directory](decisions/0019-includes.md)

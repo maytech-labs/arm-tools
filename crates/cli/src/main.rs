@@ -145,22 +145,29 @@ fn run(args: &[String], lint: bool) -> ExitCode {
                 continue;
             }
         };
-        let analysis = Analysis::new(&text);
-        let mut diagnostics: Vec<Diagnostic> = analysis.diagnostics().to_vec();
-        if lint {
-            let config = match &fixed_config {
-                Some(config) => config.clone(),
-                None => {
-                    let dir = file.parent().unwrap_or(Path::new("."));
-                    match Config::discover(dir) {
-                        Ok(config) => config,
-                        Err(error) => {
-                            eprintln!("armtool: {error}");
-                            return ExitCode::from(2);
-                        }
+        // The config sets include paths for check and lint, and rule levels
+        // for lint.
+        let config = match &fixed_config {
+            Some(config) => config.clone(),
+            None => {
+                let dir = file.parent().unwrap_or(Path::new("."));
+                match Config::discover(dir) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        eprintln!("armtool: {error}");
+                        return ExitCode::from(2);
                     }
                 }
-            };
+            }
+        };
+        let path = arm_sema::normalize(&std::env::current_dir().unwrap_or_default().join(file));
+        let resolver = arm_sema::FsResolver {
+            dirs: config.include_dirs(&path),
+            open: Default::default(),
+        };
+        let analysis = Analysis::with_includes(&text, Some(path), &resolver);
+        let mut diagnostics: Vec<Diagnostic> = analysis.diagnostics().to_vec();
+        if lint {
             diagnostics.extend(arm_lint::lint(&analysis, &config));
             diagnostics.sort_by_key(|d| (d.range.start, d.range.end));
         }

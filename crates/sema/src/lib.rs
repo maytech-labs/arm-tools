@@ -5,9 +5,11 @@ mod analysis;
 mod diagnostic;
 mod line_index;
 mod operands;
+mod resolver;
 mod suggest;
 
-pub use analysis::{Analysis, Instruction, Item, Reference, Symbol, SymbolKind};
+pub use analysis::{Analysis, Instruction, Item, Origin, Reference, Resolver, Symbol, SymbolKind};
 pub use diagnostic::{Diagnostic, Severity};
 pub use line_index::{Encoding, LineCol, LineIndex};
+pub use resolver::{FsResolver, canonical, normalize};
 pub use suggest::suggest;

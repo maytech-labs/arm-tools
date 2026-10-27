@@ -184,14 +184,55 @@ impl Server<'_> {
         Ok(())
     }
 
+    /// Reanalyzes a document and publishes its diagnostics, then those of
+    /// open documents that include it, so they see its unsaved edits.
     fn update(&mut self, uri: Uri, text: &str) -> Result<()> {
-        let analysis = Analysis::new(text);
-        let mut found: Vec<arm_sema::Diagnostic> = analysis.diagnostics().to_vec();
-        // Lint with the nearest armtool.toml; a broken one is shown, not ignored.
-        let config = match file_path(&uri).and_then(|p| p.parent().map(Path::to_path_buf)) {
-            Some(dir) => arm_lint::Config::discover(&dir),
+        self.refresh(uri.clone(), text)?;
+        let changed = file_path(&uri).map(|p| arm_sema::canonical(&p));
+        let dependents: Vec<(Uri, String)> = self
+            .documents
+            .iter()
+            .filter(|(other, doc)| {
+                **other != uri
+                    && doc.analysis.symbols().iter().any(|s| {
+                        s.origin
+                            .as_ref()
+                            .is_some_and(|o| Some(arm_sema::canonical(&o.path)) == changed)
+                    })
+            })
+            .map(|(other, doc)| (other.clone(), doc.analysis.text().to_string()))
+            .collect();
+        for (other, text) in dependents {
+            self.refresh(other, &text)?;
+        }
+        Ok(())
+    }
+
+    fn refresh(&mut self, uri: Uri, text: &str) -> Result<()> {
+        // The nearest armtool.toml sets lint levels and include paths; a
+        // broken one is shown, not ignored.
+        let path = file_path(&uri).map(|p| arm_sema::normalize(&p));
+        let config = match path.as_ref().and_then(|p| p.parent()) {
+            Some(dir) => arm_lint::Config::discover(dir),
             None => Ok(arm_lint::Config::default()),
         };
+        let analysis = match &path {
+            Some(path) => {
+                let dirs = config.as_ref().map_or_else(
+                    |_| arm_lint::Config::default().include_dirs(path),
+                    |c| c.include_dirs(path),
+                );
+                let open = self
+                    .documents
+                    .iter()
+                    .filter_map(|(u, d)| Some((file_path(u)?, d.analysis.text().to_string())))
+                    .collect();
+                let resolver = arm_sema::FsResolver { dirs, open };
+                Analysis::with_includes(text, Some(path.clone()), &resolver)
+            }
+            None => Analysis::new(text),
+        };
+        let mut found: Vec<arm_sema::Diagnostic> = analysis.diagnostics().to_vec();
         match config {
             Ok(config) => found.extend(arm_lint::lint(&analysis, &config)),
             Err(error) => found.push(arm_sema::Diagnostic {
@@ -288,11 +329,18 @@ impl Server<'_> {
                 let params: GotoDefinitionParams = params(request)?;
                 let at = &params.text_document_position_params;
                 let result = self.at(at).and_then(|(doc, offset)| {
-                    let range = ide::definition(&doc.analysis, offset)?;
-                    Some(GotoDefinitionResponse::Scalar(Location {
-                        uri: at.text_document.uri.clone(),
-                        range: self.range(&doc.analysis, range),
-                    }))
+                    let definition = ide::definition(&doc.analysis, offset)?;
+                    let location = match &definition.origin {
+                        None => Location {
+                            uri: at.text_document.uri.clone(),
+                            range: self.range(&doc.analysis, definition.range),
+                        },
+                        Some(origin) => Location {
+                            uri: path_uri(&origin.path)?,
+                            range: self.range_in(&origin.text, definition.range),
+                        },
+                    };
+                    Some(GotoDefinitionResponse::Scalar(location))
                 });
                 Ok(ok(id, result))
             }
@@ -405,6 +453,16 @@ impl Server<'_> {
         Position::new(at.line, at.col)
     }
 
+    /// A range in some other file's text, like an included file.
+    fn range_in(&self, text: &str, range: Range<usize>) -> lsp_types::Range {
+        let index = arm_sema::LineIndex::new(text);
+        let at = |offset| {
+            let p = index.line_col(text, offset, self.encoding);
+            Position::new(p.line, p.col)
+        };
+        lsp_types::Range::new(at(range.start), at(range.end))
+    }
+
     fn range(&self, analysis: &Analysis, range: Range<usize>) -> lsp_types::Range {
         lsp_types::Range::new(
             self.position(analysis, range.start),
@@ -461,6 +519,19 @@ impl Server<'_> {
         }
         out
     }
+}
+
+/// A `file:` URI for a path, percent-encoding what URIs don't allow.
+fn path_uri(path: &Path) -> Option<Uri> {
+    let mut text = String::from("file://");
+    for byte in path.to_str()?.bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-_.~".contains(&byte) {
+            text.push(byte as char);
+        } else {
+            text.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    text.parse().ok()
 }
 
 /// The local path of a `file:` URI, percent-decoded.
@@ -528,6 +599,14 @@ fn completion_item(completion: ide::Completion) -> CompletionItem {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    #[test]
+    fn paths_round_trip_through_uris() {
+        let path = PathBuf::from("/Users/me/My Code/a+b.s");
+        let uri = path_uri(&path).expect("uri");
+        assert_eq!(uri.as_str(), "file:///Users/me/My%20Code/a%2Bb.s");
+        assert_eq!(file_path(&uri), Some(path));
+    }
 
     #[test]
     fn file_uris_become_paths() {

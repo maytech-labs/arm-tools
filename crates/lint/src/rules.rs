@@ -184,7 +184,9 @@ fn unused_labels(analysis: &Analysis, out: &mut Vec<Finding>) {
         // L and l prefixes are assembler-local temporaries; compilers emit
         // many, like Ltmp0 for debug info, that nothing in the file names.
         let temporary = symbol.name.starts_with(['L', 'l']);
-        if symbol.kind != SymbolKind::Label || symbol.exported || temporary {
+        // Labels from included files may be used by other files.
+        let imported = symbol.origin.is_some();
+        if symbol.kind != SymbolKind::Label || symbol.exported || temporary || imported {
             continue;
         }
         if analysis.references_to(i).next().is_none() {
