@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 arm-isa.workspace = true
+arm-lint.workspace = true
 arm-sema.workspace = true
 arm-syntax.workspace = true
 lsp-server = "0.10.0"

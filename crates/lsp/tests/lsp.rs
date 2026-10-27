@@ -262,6 +262,11 @@ fn exit_without_shutdown_is_exit_code_1() {
 fn publishes_diagnostics_on_open_and_change() {
     let mut client = Client::start(true);
     let diagnostics = client.open("_f: nop\n_f: frob x0\nmov x0, x1,\n");
+    // Leave out lint hints (severity 4), like the unused-label hint on _f.
+    let diagnostics: Vec<Value> = diagnostics
+        .into_iter()
+        .filter(|d| d["severity"] != 4)
+        .collect();
     let summary: Vec<_> = diagnostics
         .iter()
         .map(|d| {
@@ -289,7 +294,10 @@ fn publishes_diagnostics_on_open_and_change() {
     );
 
     // Fixing the file clears them.
-    assert_eq!(client.change(2, "_f: nop\n"), Vec::<Value>::new());
+    assert_eq!(
+        client.change(2, ".globl _f\n_f: ret\n"),
+        Vec::<Value>::new()
+    );
 
     // Closing clears them too.
     client.notify(
@@ -298,6 +306,59 @@ fn publishes_diagnostics_on_open_and_change() {
     );
     assert_eq!(client.diagnostics(), Vec::<Value>::new());
     assert!(client.shutdown().success());
+}
+
+/// Opens `text` as a file in a fresh directory, with an optional
+/// armtool.toml beside it, and returns its diagnostics' codes and severities.
+fn lint_codes(text: &str, config: Option<&str>) -> Vec<(String, u64)> {
+    let dir = std::env::temp_dir().join(format!(
+        "armls-lint-{}-{}",
+        std::process::id(),
+        config.map_or(0, str::len)
+    ));
+    std::fs::create_dir_all(&dir).expect("dir");
+    if let Some(config) = config {
+        std::fs::write(dir.join("armtool.toml"), config).expect("config");
+    }
+    let uri = format!("file://{}/a.s", dir.display());
+    let mut client = Client::start(true);
+    client.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "asm", "version": 1, "text": text } }),
+    );
+    let message = loop {
+        let message = client.receive();
+        if message["method"] == "textDocument/publishDiagnostics" && message["params"]["uri"] == uri
+        {
+            break message;
+        }
+    };
+    assert!(client.shutdown().success());
+    let _ = std::fs::remove_dir_all(&dir);
+    message["params"]["diagnostics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|d| {
+            (
+                d["code"].as_str().unwrap_or_default().to_string(),
+                d["severity"].as_u64().unwrap_or(0),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn lint_rules_run_with_the_nearest_config() {
+    let text = ".globl _f\n_f:\n    mov x18, #1\n    ret\n";
+    assert_eq!(
+        lint_codes(text, None),
+        [("abi/x18-reserved".to_string(), 2)]
+    );
+    let off = "[rules]\n\"abi/x18-reserved\" = \"off\"\n";
+    assert_eq!(lint_codes(text, Some(off)), Vec::<(String, u64)>::new());
+    let broken = "[rules]\n\"abi/x18-reserve\" = \"off\"\n";
+    assert_eq!(lint_codes(text, Some(broken)), [("config".to_string(), 2)]);
 }
 
 #[test]

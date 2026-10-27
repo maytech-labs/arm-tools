@@ -71,10 +71,12 @@ Done when Neovim and VS Code show diagnostics, hover, definition, references, co
 
 Done when the first rules in the design run in `armls` and `armtool lint`, each with tests and a doc page, and none fires falsely on the corpus.
 
-- [ ] Rule engine, IDs, severities, `armtool.toml`, inline allows
-- [ ] Per-function CFG
-- [ ] The first rules from [design.md](design.md#lint)
-- [ ] `armtool lint --json` and code actions for fixes
+- [x] Rule engine, IDs, severities, `armtool.toml`, inline allows ([0018](decisions/0018-lint.md))
+- [x] File-wide control-flow graph, functions by reachability, sp dataflow
+- [x] The first rules: [lint.md](lint.md)
+- [x] `armtool check`, `lint --json`, `rules`, `explain`; lint in armls
+- [ ] Code actions for fixes
+- [ ] More rules: syscall conventions, x16/x17 across calls, reads of undefined registers
 
 ## M6: formatter
 

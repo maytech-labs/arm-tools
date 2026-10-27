@@ -4,6 +4,7 @@
 |---|---|
 | [design.md](design.md) | How the suite is built: syntax, ISA, sema, lint, language server, command line |
 | [roadmap.md](roadmap.md) | Milestones, their "done when" bars, and what's done |
+| [lint.md](lint.md) | Every lint rule, and how to configure them |
 | [decisions/](decisions/) | Every decision, as an ADR, never rewritten. Copy [0000-template.md](decisions/0000-template.md) to add one. |
 
 ## Decisions
@@ -25,3 +26,4 @@
 - [0015 The semantic model is per file, and reports only what clang rejects](decisions/0015-sema-file-model.md)
 - [0016 armls v1: features before operand checking, full sync, and a fixed token legend](decisions/0016-armls-v1.md)
 - [0017 Operand checking: clang's operand model, ported predicates, and permissive gaps](decisions/0017-operand-matching.md)
+- [0018 The linter: rules over the semantic model, a control-flow graph, and quiet when unsure](decisions/0018-lint.md)

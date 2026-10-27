@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
@@ -185,8 +186,23 @@ impl Server<'_> {
 
     fn update(&mut self, uri: Uri, text: &str) -> Result<()> {
         let analysis = Analysis::new(text);
-        let diagnostics = analysis
-            .diagnostics()
+        let mut found: Vec<arm_sema::Diagnostic> = analysis.diagnostics().to_vec();
+        // Lint with the nearest armtool.toml; a broken one is shown, not ignored.
+        let config = match file_path(&uri).and_then(|p| p.parent().map(Path::to_path_buf)) {
+            Some(dir) => arm_lint::Config::discover(&dir),
+            None => Ok(arm_lint::Config::default()),
+        };
+        match config {
+            Ok(config) => found.extend(arm_lint::lint(&analysis, &config)),
+            Err(error) => found.push(arm_sema::Diagnostic {
+                range: 0..0,
+                severity: Severity::Warning,
+                code: "config",
+                message: format!("{error}. Lint rules are off until it's fixed."),
+            }),
+        }
+        found.sort_by_key(|d| (d.range.start, d.range.end));
+        let diagnostics = found
             .iter()
             .map(|d| lsp_types::Diagnostic {
                 range: self.range(&analysis, d.range.clone()),
@@ -447,6 +463,32 @@ impl Server<'_> {
     }
 }
 
+/// The local path of a `file:` URI, percent-decoded.
+fn file_path(uri: &Uri) -> Option<PathBuf> {
+    let rest = uri.as_str().strip_prefix("file://")?;
+    let bytes = rest.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        match (
+            bytes[i],
+            bytes.get(i + 1).copied().and_then(hex),
+            bytes.get(i + 2).copied().and_then(hex),
+        ) {
+            (b'%', Some(hi), Some(lo)) => {
+                out.push(u8::try_from(hi * 16 + lo).ok()?);
+                i += 3;
+            }
+            (b, _, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    Some(PathBuf::from(String::from_utf8(out).ok()?))
+}
+
 enum Failure {
     InvalidParams(String),
     MethodNotFound(String),
@@ -479,5 +521,22 @@ fn completion_item(completion: ide::Completion) -> CompletionItem {
         kind: Some(kind),
         detail: completion.detail,
         ..CompletionItem::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn file_uris_become_paths() {
+        let uri = Uri::from_str("file:///Users/me/My%20Code/a.s").expect("uri");
+        assert_eq!(
+            file_path(&uri),
+            Some(PathBuf::from("/Users/me/My Code/a.s"))
+        );
+        let other = Uri::from_str("untitled:Untitled-1").expect("uri");
+        assert_eq!(file_path(&other), None);
     }
 }

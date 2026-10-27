@@ -2,7 +2,7 @@
 
 Tools for writing AArch64 assembly on macOS: a language server, a linter, and a formatter, built on one parser and one model of the instruction set.
 
-> **Status: pre-release.** `armls` works: errors as you type, hover, completion, navigation, rename, and highlighting. Operand checking and the linter are next. See the [roadmap](docs/roadmap.md).
+> **Status: pre-release.** `armls` and `armtool` work: errors as you type in clang's words, operand checking, 11 lint rules, hover, completion, navigation, rename, and highlighting. See the [roadmap](docs/roadmap.md).
 
 It targets the assembly Apple's toolchain accepts: `clang -c -arch arm64`, Mach-O, the Darwin ABI. That means `_`-prefixed symbols, `@PAGE` and `@PAGEOFF`, `;` comments, `%%` separators, and x18 reserved for the OS.
 
@@ -10,15 +10,15 @@ It targets the assembly Apple's toolchain accepts: `clang -c -arch arm64`, Mach-
 |---|---|
 | `armls` | Language server: diagnostics, hover docs for instructions and registers, completion, go to definition, references, rename, document symbols, semantic highlighting |
 | `armtool lint` | The linter, for the terminal and CI. The same rules show up in your editor through `armls`. |
-| `armtool check` | Syntax and operand errors without assembling |
+| `armtool check` | Syntax, symbol, and operand errors without assembling, as clang reports them |
 | `armtool fmt` | Formatter (later) |
 
-The linter goes past syntax: ABI rules (callee-saved registers, x18, stack alignment), `adrp` without its `@PAGEOFF`, unbalanced prologues and epilogues, and dead or unreachable code. The [design](docs/design.md#lint) has the full list.
+The linter goes past syntax: ABI rules (callee-saved registers, x18, stack alignment, frame records), `adrp` without its `@PAGEOFF`, stacks left unbalanced on some path, and unreachable code. [docs/lint.md](docs/lint.md) has every rule and how to configure them.
 
 ## Install
 
 ```sh
-make install                    # armls into /usr/local/bin
+make install                    # armls and armtool into /usr/local/bin
 make install PREFIX=~/.local    # somewhere else
 ```
 

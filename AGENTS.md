@@ -11,9 +11,9 @@ arm-tools is a Cargo workspace of tools for AArch64 assembly on macOS: a languag
 | `crates/syntax` | `arm-syntax` | Lexer and lossless, error-tolerant parser. Every byte of the input is in the tree. |
 | `crates/isa` | `arm-isa` | AArch64 instruction tables generated from LLVM: mnemonics, operand forms, registers, features. `src/generated.rs` is written by `cargo xtask gen-isa`; never edit it by hand. Licensed MIT and Apache-2.0 WITH LLVM-exception ([0014](docs/decisions/0014-isa-from-asm-matcher.md)). |
 | `crates/sema` | `arm-sema` | The semantic model: symbols, labels, macros, `.include`, sections, conditional assembly |
-| `crates/lint` | `arm-lint` | The lint engine and its rules |
+| `crates/lint` | `arm-lint` | The lint engine and its rules. Adding a rule: add it to `RULES` in `rules.rs` with tests, then regenerate docs/lint.md (`crates/lint/tests/docs.rs` fails until you do) |
 | `crates/lsp` | `arm-lsp` | The `armls` binary: the language server |
-| `crates/cli` | `arm-cli` | The `armtool` binary: `lint`, `check`, `fmt` from the command line and CI |
+| `crates/cli` | `arm-cli` | The `armtool` binary: `check`, `lint`, `rules`, `explain` from the command line and CI |
 | `xtask` | (not published) | Repo automation: `cargo xtask check`, `survey`, `gen-isa`, `nvim-smoke` |
 | `editors/` | | Editor setup; `editors/neovim/smoke.lua` is the headless Neovim test |
 

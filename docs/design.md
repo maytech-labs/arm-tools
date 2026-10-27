@@ -97,7 +97,7 @@ Built from the tree for one file plus what it includes:
 
 ## Lint
 
-**Status:** Not started.
+**Status:** First rules done (2026-10-26), in armls and `armtool lint` ([0018](decisions/0018-lint.md)). The rules and their configuration are in [lint.md](lint.md).
 
 Rules have an ID (`group/name`), a default severity, and a doc page. They're configured in `armtool.toml` at the project root, and can be silenced inline with `; armtool: allow(rule-id)`.
 
@@ -131,7 +131,7 @@ Features, in order: diagnostics, document symbols, hover, go to definition and r
 
 ## Command line
 
-**Status:** Not started.
+**Status:** `check`, `lint`, `rules`, and `explain` done (2026-10-26); `fmt` not started.
 
 `armtool lint [paths]`, `armtool check [paths]`, `armtool fmt [--check] [paths]`. Each supports `--json`. Exit codes: 0 clean, 1 findings, 2 usage error.
 

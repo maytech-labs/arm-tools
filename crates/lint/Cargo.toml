@@ -9,7 +9,11 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+arm-isa.workspace = true
 arm-sema.workspace = true
+arm-syntax.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"
 
 [lints]
 workspace = true

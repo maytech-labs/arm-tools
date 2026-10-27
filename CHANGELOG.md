@@ -26,5 +26,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `cargo xtask nvim-smoke`: runs armls in headless Neovim.
 - Operand checking: every instruction is matched against clang's forms, with clang's messages for out-of-range immediates, misaligned offsets, wrong registers, and operand counts. Hover shows instruction signatures.
 - `cargo xtask survey --recall`: how many of clang's errors arm-sema catches.
-- Design doc, roadmap, and ADRs 0001 to 0017.
+- `arm-lint`: 11 rules for Apple's ABI, address materialization, and control flow, with `armtool.toml` levels and `; armtool: allow(rule)` comments. Rule reference in docs/lint.md.
+- `armtool check`, `lint` (with `--json`), `rules`, and `explain`. Exit codes 0 clean, 1 findings, 2 usage or config problems.
+- armls publishes lint findings, using the nearest `armtool.toml`.
+- Design doc, roadmap, and ADRs 0001 to 0018.
 - `cargo xtask check` and CI on macOS and Linux.
