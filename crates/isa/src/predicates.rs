@@ -136,12 +136,26 @@ fn dispatch(p: &Pred, op: &Operand) -> Option<Check> {
             const_bool(op, |v| imm_scaled_ok(v, bits, 1, true))
         }
         "isSImmScaled" => imm_scaled(op, bits_arg(p.int(0)?)?, scale_arg(p.int(1)?)?, true),
+        // `isUImmScaled<Bits, Scale, Offset, IsRange>`: a range (`0:3`) fits
+        // only a range class, and its last value must be its first plus
+        // Offset; then the first is checked like an immediate.
         "isUImmScaled" => {
-            // LLVM's `k_ImmRange` (`0:1`) has no counterpart in `Operand`.
-            if p.args.len() > 2 && p.bool(3)? {
-                return None;
+            // Range classes use 0 bits for a single offset, 0.
+            let bits = u32::try_from(p.int(0)?).ok().filter(|b| *b <= 32)?;
+            let scale = scale_arg(p.int(1)?)?;
+            let is_range = p.args.len() > 3 && p.bool(3)?;
+            let offset = if p.args.len() > 2 { p.int(2)? } else { 0 };
+            match op {
+                Operand::ImmRange { first, last } => {
+                    if !is_range || *last != first + offset {
+                        NoMatch
+                    } else {
+                        from_bool(true, imm_scaled_ok(*first, bits, scale, false))
+                    }
+                }
+                _ if is_range => NoMatch,
+                _ => return Some(imm_scaled(op, bits, scale, false)),
             }
-            imm_scaled(op, bits_arg(p.int(0)?)?, scale_arg(p.int(1)?)?, false)
         }
         "isSImm9OffsetFB" => {
             let scale = scale_arg(p.int(0)? / 8)?;
@@ -273,12 +287,36 @@ fn dispatch(p: &Pred, op: &Operand) -> Option<Check> {
         },
         "isSystemPStateFieldWithImm0_15" => yes(keyword(op).is_some_and(names::is_pstate_imm0_15)),
         "isSystemPStateFieldWithImm0_1" => yes(keyword(op).is_some_and(names::is_pstate_imm0_1)),
-        // The system register table is large and feature-gated; not ported.
+        // `tryParseSysReg`: a name from LLVM's SysReg table that the target
+        // has, readable for mrs and writable for msr, or a generic
+        // `s3_0_c15_c2_0`. A name gated by a CPU feature isn't judged: the
+        // feature set isn't known here.
         "isMRSSystemRegister" | "isMSRSystemRegister" => {
-            if keyword(op).is_some() || matches!(op, Operand::Register(_)) {
-                return None;
+            let Some(name) = keyword(op) else {
+                if matches!(op, Operand::Register(_)) {
+                    return None;
+                }
+                return Some(NoMatch);
+            };
+            if names::is_svcr(name) {
+                return Some(NoMatch);
             }
-            NoMatch
+            let read = p.name == "isMRSSystemRegister";
+            match names::system_register(name) {
+                // Gated: with the feature, the direction decides; without
+                // it, clang doesn't know the name. Either way, a read-only
+                // register can't be written, nor a write-only one read.
+                Some(&(_, readable, writable, true)) => {
+                    if (read && readable) || (!read && writable) {
+                        return None;
+                    }
+                    NearMiss
+                }
+                Some(&(_, readable, writable, false)) => {
+                    from_bool(true, if read { readable } else { writable })
+                }
+                None => from_bool(true, names::is_generic_system_register(name)),
+            }
         }
 
         // Shifts and extends.
@@ -1314,6 +1352,10 @@ mod tests {
         }
     }
 
+    fn range(first: i64, last: i64) -> Operand {
+        Operand::ImmRange { first, last }
+    }
+
     fn ident(name: &str) -> Operand {
         Operand::Ident(name.into())
     }
@@ -1430,7 +1472,7 @@ mod tests {
             ("isSImmScaled<4, 16>", imm(-128), Match),
             ("isUImmScaled<6, 8>", imm(504), Match),
             ("isUImmScaled<6, 8>", imm(-8), NearMiss),
-            ("isUImmScaled<0, 2, 1, /*IsRange=*/true>", imm(0), Unknown),
+            ("isUImmScaled<0, 2, 1, /*IsRange=*/true>", imm(0), NoMatch),
             // `ldr x0, [x1, #32760]` assembles; `#32768` doesn't.
             ("isUImm12Offset<8>", imm(32760), Match),
             ("isUImm12Offset<8>", imm(32768), NearMiss),
@@ -1686,7 +1728,56 @@ mod tests {
             ("isSystemPStateFieldWithImm0_15", ident("daifset"), Match),
             ("isSystemPStateFieldWithImm0_15", ident("allint"), NoMatch),
             ("isSystemPStateFieldWithImm0_1", ident("allint"), Match),
-            ("isMRSSystemRegister", ident("tpidr_el0"), Unknown),
+            // SME offset ranges: `0:3` for a range of 4, scaled by 4.
+            (
+                "isUImmScaled<2, 4, 3, /*IsRange=*/true>",
+                range(0, 3),
+                Match,
+            ),
+            (
+                "isUImmScaled<2, 4, 3, /*IsRange=*/true>",
+                range(4, 7),
+                Match,
+            ),
+            (
+                "isUImmScaled<2, 4, 3, /*IsRange=*/true>",
+                range(0, 2),
+                NoMatch,
+            ),
+            (
+                "isUImmScaled<2, 4, 3, /*IsRange=*/true>",
+                range(2, 5),
+                NearMiss,
+            ),
+            ("isUImmScaled<2, 4, 3, /*IsRange=*/true>", imm(0), NoMatch),
+            (
+                "isUImmScaled<0, 2, 1, /*IsRange=*/true>",
+                range(0, 1),
+                Match,
+            ),
+            (
+                "isUImmScaled<0, 2, 1, /*IsRange=*/true>",
+                range(2, 3),
+                NearMiss,
+            ),
+            ("isUImmScaled<3, 8, 0>", range(0, 0), NoMatch),
+            ("isMRSSystemRegister", ident("tpidr_el0"), Match),
+            ("isMSRSystemRegister", ident("tpidr_el0"), Match),
+            // Read-only, and write-only.
+            ("isMRSSystemRegister", ident("midr_el1"), Match),
+            ("isMSRSystemRegister", ident("midr_el1"), NearMiss),
+            ("isMRSSystemRegister", ident("TPIDR_EL0"), Match),
+            ("isMRSSystemRegister", ident("tpidr_el9"), NearMiss),
+            // Generic names, in range or not.
+            ("isMRSSystemRegister", ident("s3_0_c15_c2_0"), Match),
+            ("isMSRSystemRegister", ident("S3_7_C15_C15_7"), Match),
+            ("isMRSSystemRegister", ident("s4_0_c15_c2_0"), NearMiss),
+            ("isMRSSystemRegister", ident("s3_0_c16_c2_0"), NearMiss),
+            // SVCR names aren't system registers to mrs.
+            ("isMRSSystemRegister", ident("svcrsm"), NoMatch),
+            // Gated by SME: read-only either way; readable only with SME.
+            ("isMSRSystemRegister", ident("smidr_el1"), NearMiss),
+            ("isMRSSystemRegister", ident("smidr_el1"), Unknown),
             ("isMSRSystemRegister", imm(0), NoMatch),
         ]);
     }
@@ -2112,15 +2203,7 @@ mod tests {
     /// real answer for some operand) or on this list, and none panics.
     #[test]
     fn every_generated_predicate_is_handled() {
-        let deliberately_unknown = [
-            "isUImmScaled<0, 2, 1, /*IsRange=*/true>",
-            "isUImmScaled<0, 4, 3, /*IsRange=*/true>",
-            "isUImmScaled<1, 2, 1, /*IsRange=*/true>",
-            "isUImmScaled<1, 4, 3, /*IsRange=*/true>",
-            "isUImmScaled<2, 2, 1, /*IsRange=*/true>",
-            "isUImmScaled<2, 4, 3, /*IsRange=*/true>",
-            "isUImmScaled<3, 2, 1, /*IsRange=*/true>",
-        ];
+        let deliberately_unknown: [&str; 0] = [];
         let samples = [
             imm(0),
             imm(1),

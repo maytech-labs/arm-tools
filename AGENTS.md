@@ -61,7 +61,7 @@ Two kinds of test, plus an oracle ([0007](docs/decisions/0007-testing.md)).
   cargo xtask survey --linux /tmp/llvm-project/llvm/test/MC/AArch64 crates/syntax/tests/data
   ```
 
-  Both platforms must have zero disagreements ([0038](docs/decisions/0038-linux.md)).
+  Both platforms must have zero disagreements ([0038](docs/decisions/0038-linux.md)). `--recall` reports how many of clang's errors we catch, and `--misses` lists clang's message on each line we don't, to find what to do next ([0043](docs/decisions/0043-recall.md)).
 
 - **Instruction tables:** to regenerate, check out the LLVM tag matching `llvm-tblgen --version` (21.1.8 today) and run `cargo xtask gen-isa --llvm <checkout> --tblgen $(brew --prefix llvm)/bin/llvm-tblgen`. Run `cargo xtask gen-isa` alone for the sparse checkout command. The output must be identical when nothing in LLVM changed.
 

@@ -139,6 +139,15 @@ impl Form {
             .map(|&i| Feature(usize::from(i)))
     }
 
+    /// What `movprfx` needs of the instruction after it: whether it's
+    /// destructive (its destination is also a source), and its element size,
+    /// 0 for none and 1 to 4 for B, H, S, and D.
+    pub fn prefix_flags(self) -> (bool, u8) {
+        PREFIX_FLAGS
+            .binary_search_by(|(opcode, ..)| opcode.cmp(&self.opcode()))
+            .map_or((false, 0), |i| (PREFIX_FLAGS[i].1, PREFIX_FLAGS[i].2))
+    }
+
     pub fn operands(self) -> impl Iterator<Item = OperandClass> + use<> {
         let (start, len) = self.info().operands;
         let start = start as usize;

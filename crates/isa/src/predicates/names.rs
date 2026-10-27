@@ -103,6 +103,43 @@ pub(super) fn is_pstate_imm0_15(name: &str) -> bool {
     )
 }
 
+/// A system register by name, ignoring case: (name, readable, writable,
+/// gated by a CPU feature).
+pub(super) fn system_register(name: &str) -> Option<&'static (&'static str, bool, bool, bool)> {
+    let lower = name.to_ascii_lowercase();
+    let table = crate::generated::SYSTEM_REGISTERS;
+    table
+        .binary_search_by(|(n, ..)| n.cmp(&lower.as_str()))
+        .ok()
+        .map(|i| &table[i])
+}
+
+/// `S<op0>_<op1>_C<n>_C<m>_<op2>`, any system register by its encoding
+/// (`AArch64SysReg::parseGenericRegister`).
+pub(super) fn is_generic_system_register(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    let parts: Vec<&str> = upper.split('_').collect();
+    let number = |text: &str, max: u32| {
+        !text.is_empty()
+            && text.len() <= 2
+            && !(text.len() == 2 && text.starts_with('0'))
+            && text.parse::<u32>().is_ok_and(|n| n <= max)
+    };
+    match parts.as_slice() {
+        [op0, op1, crn, crm, op2] => {
+            op0.strip_prefix('S')
+                .is_some_and(|n| n.len() == 1 && number(n, 3))
+                && op1.len() == 1
+                && number(op1, 7)
+                && crn.strip_prefix('C').is_some_and(|n| number(n, 15))
+                && crm.strip_prefix('C').is_some_and(|n| number(n, 15))
+                && op2.len() == 1
+                && number(op2, 7)
+        }
+        _ => false,
+    }
+}
+
 /// `PStateImm0_1`.
 pub(super) fn is_pstate_imm0_1(name: &str) -> bool {
     listed(&["allint", "pm"], name)

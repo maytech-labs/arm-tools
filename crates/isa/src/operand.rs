@@ -43,6 +43,11 @@ pub enum Operand {
     },
     /// The `[1]` after a vector register or list.
     VectorIndex(i64),
+    /// An offset range in an SME array index: `0:3` in `za.d[w8, 0:3]`.
+    ImmRange {
+        first: i64,
+        last: i64,
+    },
     /// A bare name that isn't a register: a symbol, or a keyword some
     /// instructions take, like a barrier option (`ish`), prefetch operation
     /// (`pldl1keep`), system register (`tpidr_el0`), or SVE pattern (`vl8`).

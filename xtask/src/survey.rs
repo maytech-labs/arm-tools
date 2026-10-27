@@ -28,7 +28,8 @@ fn clang_args(platform: arm_syntax::Platform) -> Vec<String> {
 }
 
 pub fn run(args: Vec<String>) -> ExitCode {
-    let recall = args.iter().any(|a| a == "--recall");
+    let misses = args.iter().any(|a| a == "--misses");
+    let recall = misses || args.iter().any(|a| a == "--recall");
     let platform = if args.iter().any(|a| a == "--linux") {
         arm_syntax::Platform::Linux
     } else {
@@ -36,7 +37,7 @@ pub fn run(args: Vec<String>) -> ExitCode {
     };
     let paths: Vec<String> = args
         .into_iter()
-        .filter(|a| a != "--recall" && a != "--linux")
+        .filter(|a| a != "--recall" && a != "--linux" && a != "--misses")
         .collect();
     if paths.is_empty() {
         eprintln!("usage: cargo xtask survey [--recall] [--linux] <path>...");
@@ -74,6 +75,14 @@ pub fn run(args: Vec<String>) -> ExitCode {
         };
         clang_lines += theirs.lines.len();
         caught += theirs.lines.iter().filter(|l| ours.contains_key(l)).count();
+        if misses {
+            for (line, message) in &theirs.messages {
+                if !ours.contains_key(line) {
+                    let source = text.lines().nth(line - 1).unwrap_or_default().trim();
+                    println!("miss\t{message}\t{source}");
+                }
+            }
+        }
         for (line, message) in ours {
             flagged += 1;
             if theirs.lines.contains(&line) {
@@ -161,6 +170,8 @@ fn error_lines(text: &str, platform: arm_syntax::Platform) -> BTreeMap<usize, St
 struct ClangErrors {
     /// 1-based lines in the file.
     lines: BTreeSet<usize>,
+    /// Clang's first message on each line.
+    messages: BTreeMap<usize, String>,
     /// Errors located in some other file, raised while writing the object.
     late: usize,
 }
@@ -182,16 +193,21 @@ fn clang_errors(
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut errors = ClangErrors {
         lines: BTreeSet::new(),
+        messages: BTreeMap::new(),
         late: 0,
     };
     let file = file.to_string_lossy();
-    for (location, _) in stderr.lines().filter_map(|l| l.split_once(": error:")) {
+    for (location, message) in stderr.lines().filter_map(|l| l.split_once(": error:")) {
         // `path:line:col`; the path may itself contain colons.
         let mut parts = location.rsplitn(3, ':');
         let (_col, line, path) = (parts.next(), parts.next(), parts.next());
         match (line.and_then(|l| l.parse().ok()), path) {
             (Some(line), Some(path)) if path == file => {
                 errors.lines.insert(line);
+                errors
+                    .messages
+                    .entry(line)
+                    .or_insert_with(|| message.trim().to_string());
             }
             _ => errors.late += 1,
         }

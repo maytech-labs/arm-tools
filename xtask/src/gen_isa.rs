@@ -125,6 +125,8 @@ fn generate(llvm: &Path, tblgen: &Path) -> Result<String, String> {
         .map(|b| b.trim_start_matches("Feature_").trim_end_matches("Bit"))
         .collect();
     let features = crate::gen_features::extract(&json, &feature_predicates)?;
+    let system_registers = system_registers(&json)?;
+    let prefix_flags = prefix_flags(&json)?;
     drop(json);
     let mut out = render(&Render {
         version: &version,
@@ -141,6 +143,8 @@ fn generate(llvm: &Path, tblgen: &Path) -> Result<String, String> {
         class_index: &class_index,
         directives: &directives,
         elf_directives: &elf_directives,
+        system_registers: &system_registers,
+        prefix_flags: &prefix_flags,
     })?;
     features.render(&mut out, &feature_predicates);
     std::fs::write(OUTPUT, out).map_err(|e| format!("can't write {OUTPUT}: {e}"))?;
@@ -649,6 +653,76 @@ fn parse_register_names(
     Ok(out)
 }
 
+/// What `movprfx` needs to know of the instruction after it, from each
+/// instruction record's TSFlags fields: whether it's destructive, and its
+/// element size (0 none, 1 to 4 for B, H, S, D). Only instructions with
+/// either set are listed.
+fn prefix_flags(json: &serde_json::Value) -> Result<Vec<(String, bool, u8)>, String> {
+    let records = json["!instanceof"]["Instruction"]
+        .as_array()
+        .ok_or("no Instruction records in llvm-tblgen's JSON")?;
+    let mut out: Vec<(String, bool, u8)> = records
+        .iter()
+        .filter_map(|r| r.as_str())
+        .filter_map(|r| {
+            let record = &json[r];
+            let def = |field: &str| record[field]["def"].as_str().unwrap_or("").to_string();
+            let destructive = !matches!(def("DestructiveInstType").as_str(), "NotDestructive" | "");
+            let size = match def("ElementSize").as_str() {
+                "ElementSizeB" => 1,
+                "ElementSizeH" => 2,
+                "ElementSizeS" => 3,
+                "ElementSizeD" => 4,
+                _ => 0,
+            };
+            (destructive || size != 0).then(|| (r.to_string(), destructive, size))
+        })
+        .collect();
+    out.sort();
+    if out.len() < 500 {
+        return Err(format!(
+            "only {} SVE instructions with prefix flags",
+            out.len()
+        ));
+    }
+    Ok(out)
+}
+
+/// The system registers `mrs` and `msr` name, from LLVM's `SysReg` records:
+/// lowercase name, readable, writable, and whether a CPU feature gates it.
+fn system_registers(json: &serde_json::Value) -> Result<Vec<(String, bool, bool, bool)>, String> {
+    let records = json["!instanceof"]["SysReg"]
+        .as_array()
+        .ok_or("no SysReg records in llvm-tblgen's JSON")?;
+    let mut out: Vec<(String, bool, bool, bool)> = records
+        .iter()
+        .filter_map(|r| r.as_str())
+        .map(|r| {
+            let record = &json[r];
+            let flag = |field: &str| record[field].as_i64() == Some(1);
+            let requires = record["Requires"].as_str().unwrap_or("").trim();
+            (
+                record["Name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase(),
+                flag("Readable"),
+                flag("Writeable"),
+                requires != "{}" && !requires.is_empty(),
+            )
+        })
+        .collect();
+    out.sort();
+    out.dedup_by(|a, b| a.0 == b.0);
+    if out.len() < 1000 {
+        return Err(format!(
+            "only {} system registers; is the JSON right?",
+            out.len()
+        ));
+    }
+    Ok(out)
+}
+
 /// Directive names clang accepts for a target: `-arch arm64` for macOS,
 /// `--target=aarch64-linux-gnu` for Linux. Candidates are every `".name"`
 /// string in the sources (LLVM's generic parser, the object format's, and
@@ -719,6 +793,8 @@ struct Render<'a> {
     class_index: &'a HashMap<&'a str, usize>,
     directives: &'a [String],
     elf_directives: &'a [String],
+    system_registers: &'a [(String, bool, bool, bool)],
+    prefix_flags: &'a [(String, bool, u8)],
 }
 
 fn render(r: &Render) -> Result<String, String> {
@@ -903,6 +979,30 @@ fn render(r: &Render) -> Result<String, String> {
     let _ = writeln!(w, "pub(crate) static ELF_DIRECTIVES: &[&str] = &[");
     for d in r.elf_directives {
         let _ = writeln!(w, "    {d:?},");
+    }
+    let _ = writeln!(w, "];");
+    let _ = writeln!(
+        w,
+        "\n/// Sorted. System registers from LLVM's SysReg records: (name, readable,\n/// writable, gated by a CPU feature)."
+    );
+    let _ = writeln!(
+        w,
+        "pub(crate) static SYSTEM_REGISTERS: &[(&str, bool, bool, bool)] = &["
+    );
+    for (name, read, write, gated) in r.system_registers {
+        let _ = writeln!(w, "    ({name:?}, {read}, {write}, {gated}),");
+    }
+    let _ = writeln!(w, "];");
+    let _ = writeln!(
+        w,
+        "\n/// Sorted by opcode. For movprfx: (opcode, destructive, element size:\n/// 0 none, 1 to 4 for B, H, S, D). Instructions with neither aren't listed."
+    );
+    let _ = writeln!(
+        w,
+        "pub(crate) static PREFIX_FLAGS: &[(&str, bool, u8)] = &["
+    );
+    for (opcode, destructive, size) in r.prefix_flags {
+        let _ = writeln!(w, "    ({opcode:?}, {destructive}, {size}),");
     }
     let _ = writeln!(w, "];");
     Ok(o)

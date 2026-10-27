@@ -60,6 +60,54 @@ fn label_position(node: &SyntaxNode) -> bool {
     }
 }
 
+/// An SME array or tile slice: `za.d[w8, 0, vgx2]` or `za0h.s[w12, 3]`.
+/// Clang reads the matrix, `[`, the index register, the offset, and `]`;
+/// it drops `vgx2` and `vgx4`, which the instruction already implies.
+/// Offset ranges (`0:1`) aren't modeled, so they aren't judged.
+fn matrix_index(
+    node: &SyntaxNode,
+    matrix: RegisterOperand,
+    scope: &Scope,
+    out: &mut Flattened,
+) -> Option<()> {
+    let parts: Vec<SyntaxNode> = node
+        .children()
+        .filter(|c| {
+            !(c.kind() == SyntaxKind::NameRef
+                && first_token(c).is_some_and(|t| {
+                    matches!(t.text().to_ascii_lowercase().as_str(), "vgx2" | "vgx4")
+                }))
+        })
+        .collect();
+    // `0:3` is a range: the colon sits between the two numbers, which clang
+    // wants written as integers.
+    let range = node
+        .children_with_tokens()
+        .any(|t| t.kind() == SyntaxKind::Colon);
+    let offset = match (range, parts.as_slice()) {
+        (false, [_, offset]) => match eval(offset, scope) {
+            Value::Int(v) => Operand::Imm(Imm::Constant(v)),
+            _ => return None,
+        },
+        (true, [_, first, last])
+            if first.kind() == SyntaxKind::Literal && last.kind() == SyntaxKind::Literal =>
+        {
+            match (eval(first, scope), eval(last, scope)) {
+                (Value::Int(first), Value::Int(last)) => Operand::ImmRange { first, last },
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    let index = register(&first_token(&parts[0])?.text().to_ascii_lowercase())?;
+    push(out, Operand::Register(matrix), node);
+    push(out, Operand::Token("[".into()), node);
+    push(out, Operand::Register(index), node);
+    push(out, offset, node);
+    push(out, Operand::Token("]".into()), node);
+    Some(())
+}
+
 fn push(out: &mut Flattened, operand: Operand, node: &SyntaxNode) {
     out.operands.push(operand);
     out.ranges.push(node_range(node));
@@ -180,6 +228,9 @@ fn flatten_operand(node: &SyntaxNode, scope: &Scope, out: &mut Flattened) -> Opt
         SyntaxKind::Indexed => {
             let base = first_token(node)?;
             let register = register(base.text())?;
+            if register.register.kind() == RegisterKind::Matrix {
+                return matrix_index(node, register, scope, out);
+            }
             if !matches!(
                 register.register.kind(),
                 RegisterKind::NeonVector
@@ -723,11 +774,27 @@ mod tests {
                     suffix.clone().unwrap_or_default()
                 ),
                 Operand::VectorIndex(i) => format!("[{i}]"),
+                Operand::ImmRange { first, last } => format!("{first}:{last}"),
                 Operand::Ident(n) => format!("id:{n}"),
                 Operand::CondCode(c) => format!("cc:{c}"),
                 Operand::ShiftedImm { shift, .. } => format!("shifted {shift}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn sme_array_indexes() {
+        // vgx2 is dropped, as clang drops it; a range stays a range.
+        assert_eq!(
+            names(&flat("add za.d[w8, 0, vgx2], {z0.d, z1.d}")),
+            ["za", "[", "w8", "#0", "]", "list2/1.d"]
+        );
+        assert_eq!(
+            names(&flat("smlall za.s[w8, 0:3], z0.b, z1.b")),
+            ["za", "[", "w8", "0:3", "]", "z0", "z1"]
+        );
+        // A range written with expressions isn't one clang reads.
+        assert!(flat("smlall za.s[w8, four:3], z0.b, z1.b").is_empty());
     }
 
     #[test]

@@ -44,7 +44,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Inlay hints in armls: constant values where they're used, and the syscall a `mov x16, #n` sets up.
 - `.S` files go through clang's C preprocessor for diagnostics, mapped back to the lines you wrote.
 - A Homebrew formula (`brew install --HEAD arm-tools` from this repo's tap) and a VS Code extension in `editors/vscode`.
-- Design doc, roadmap, and ADRs 0001 to 0042.
+- Design doc, roadmap, and ADRs 0001 to 0043.
 - `cargo xtask check` and CI on macOS and Linux.
 - `armls` signature help: the forms an instruction's operands so far could begin, with the operand at the cursor.
 - `armls` completion offers what fits the operand: registers of the right width, condition codes, barriers, prefetch operations, shifts and extends, labels (with `@PAGE` and `@PAGEOFF`, and global labels from other files), and constants. Mnemonics show a signature.
@@ -76,3 +76,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Quick fixes for type findings: insert `sxtw`, swap a signed condition for its unsigned counterpart (or `sdiv` and `udiv`), use X registers for a pointer, and correct an offset constant.
 - Lint: `flow/dead-store` finds register writes nothing reads. The dataflow now knows that `movk`, `bfi`, accumulating NEON instructions, and lane moves read their destination, and that vector lists (`{v0.4s, v1.4s}`) are read by stores and written by loads.
 - A docs site, built from docs/ with mdBook and published to GitHub Pages: getting started, the editor, the command line, configuration, platforms, lint rules, types, and the design and decisions.
+- More of clang's errors caught, 92.5% on Darwin and 93.7% on Linux (from 71% and 77%): SME array operands and offset ranges, system register names for mrs and msr, and the instruction after movprfx. `cargo xtask survey --misses` lists what's still missed.

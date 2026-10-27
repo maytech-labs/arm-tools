@@ -87,6 +87,8 @@ pub struct Instruction {
     pub operands: Option<Vec<arm_isa::Operand>>,
     /// The source range of each operand.
     pub operand_ranges: Vec<Range<usize>>,
+    /// The form the operands matched, when they did.
+    pub form: Option<arm_isa::Form>,
 }
 
 /// The file's contents in order, outside macro and repeat bodies: what lint
@@ -205,6 +207,7 @@ impl Analysis {
         let mut builder = Builder {
             text,
             platform,
+            matched: None,
             macro_defs: seed.macro_defs,
             depth: seed.depth,
             counter: 0,
@@ -239,6 +242,7 @@ impl Analysis {
             builder.statement(&statement);
         }
         builder.check_relocations(&parse.syntax());
+        builder.check_prefixes();
         builder.close_blocks();
         let references = builder.resolve();
         let mut diagnostics = std::mem::take(&mut builder.diagnostics);
@@ -516,6 +520,8 @@ const MAX_EXPANSION_DEPTH: usize = 8;
 struct Builder<'r> {
     text: &'r str,
     platform: Platform,
+    /// The form the instruction being built matched.
+    matched: Option<arm_isa::Form>,
     /// Macros defined so far, with their bodies.
     macro_defs: HashMap<String, MacroDef>,
     /// How many expansions deep this analysis is.
@@ -671,6 +677,7 @@ impl Builder<'_> {
                 }
                 if let Some(mnemonic) = insn.mnemonic().filter(|_| !in_body) {
                     let checkable = self.check_mnemonic(&mnemonic);
+                    self.matched = None;
                     let flat = if checkable {
                         self.check_operands(insn, &mnemonic)
                     } else {
@@ -686,6 +693,7 @@ impl Builder<'_> {
                         mnemonic_range: range(&mnemonic),
                         operands,
                         operand_ranges,
+                        form: self.matched.take(),
                     }));
                 }
                 self.collect_refs(insn.syntax());
@@ -1081,6 +1089,10 @@ impl Builder<'_> {
         let flat = operands::flatten(insn, &scope)?;
         let parsed = Mnemonic::parse(mnemonic.text());
         let mismatch = match arm_isa::match_for(&parsed, &flat.operands, self.features.as_ref()) {
+            arm_isa::MatchResult::Matched(form) => {
+                self.matched = Some(form);
+                return Some(flat);
+            }
             arm_isa::MatchResult::Mismatch(mismatch) => mismatch,
             arm_isa::MatchResult::MissingFeatures { needs, .. } => {
                 let wanted: Vec<String> = needs.iter().map(|any| any.join(" or ")).collect();
@@ -1134,6 +1146,92 @@ impl Builder<'_> {
         self.diagnostics
             .push(Diagnostic::error(at, "invalid-operand", message));
         Some(flat)
+    }
+
+    /// What follows each `movprfx`, as clang's `validateInstruction`
+    /// checks: a destructive instruction, writing the same register, and
+    /// after a predicated movprfx, with the same governing predicate and
+    /// element size. (Clang also rejects the destination as another source;
+    /// telling that from the tied source needs more than the operand list.)
+    fn check_prefixes(&mut self) {
+        struct Prefix {
+            destination: String,
+            predicate: Option<String>,
+            size: u8,
+        }
+        let llvm = |o: &arm_isa::Operand| match o {
+            arm_isa::Operand::Register(r) => Some(r.register.llvm_name().to_string()),
+            _ => None,
+        };
+        let mut prefix: Option<Prefix> = None;
+        let mut found = Vec::new();
+        for item in &self.items {
+            let Item::Instruction(insn) = item else {
+                continue;
+            };
+            let head = insn.mnemonic.head.as_str();
+            if let (Some(p), Some(form), Some(ops)) = (&prefix, insn.form, &insn.operands)
+                && !matches!(head, "brk" | "hlt")
+            {
+                let (destructive, size) = form.prefix_flags();
+                let predicate = ops.iter().skip(1).find_map(|o| match o {
+                    arm_isa::Operand::Register(r)
+                        if r.register.kind() == arm_isa::RegisterKind::SvePredicate =>
+                    {
+                        Some(r.register.llvm_name().to_string())
+                    }
+                    _ => None,
+                });
+                let message = if !destructive {
+                    Some(
+                        "instruction is unpredictable when following a movprfx, suggest replacing movprfx with mov",
+                    )
+                } else if ops.first().and_then(llvm).as_deref() != Some(p.destination.as_str()) {
+                    Some(
+                        "instruction is unpredictable when following a movprfx writing to a different destination: write to the movprfx's register",
+                    )
+                } else if let Some(pg) = &p.predicate {
+                    if predicate.is_none() || size == 0 {
+                        Some(
+                            "instruction is unpredictable when following a predicated movprfx, suggest using unpredicated movprfx",
+                        )
+                    } else if predicate.as_deref() != Some(pg.as_str()) {
+                        Some(
+                            "instruction is unpredictable when following a predicated movprfx using a different general predicate",
+                        )
+                    } else if size != p.size {
+                        Some(
+                            "instruction is unpredictable when following a predicated movprfx with a different element size",
+                        )
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if let Some(message) = message {
+                    found.push(Diagnostic::error(insn.range.clone(), "movprfx", message));
+                }
+            }
+            prefix = match (insn.form, &insn.operands) {
+                (Some(form), Some(ops)) if form.opcode().starts_with("MOVPRFX") => {
+                    ops.first().and_then(llvm).map(|destination| Prefix {
+                        destination,
+                        predicate: ops.iter().skip(1).find_map(|o| match o {
+                            arm_isa::Operand::Register(r)
+                                if r.register.kind() == arm_isa::RegisterKind::SvePredicate =>
+                            {
+                                Some(r.register.llvm_name().to_string())
+                            }
+                            _ => None,
+                        }),
+                        size: form.prefix_flags().1,
+                    })
+                }
+                _ => None,
+            };
+        }
+        self.diagnostics.extend(found);
     }
 
     /// Relocation syntax from the other platform: Mach-O's `@PAGE` family on
