@@ -35,7 +35,7 @@ Silence one finding with a comment on its line, or on the line above:
     mov x18, #1    ; armtool: allow(abi/x18-reserved)
 ```
 
-`armtool explain <rule>` prints a rule's page in the terminal.
+`armtool explain <rule>` prints a rule's page in the terminal. `armtool lint --fix` applies the fixes rules suggest, and the editor offers them as quick fixes ([0021](decisions/0021-quick-fixes.md)).
 
 ## Rules
 

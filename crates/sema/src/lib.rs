@@ -9,7 +9,7 @@ mod resolver;
 mod suggest;
 
 pub use analysis::{Analysis, Instruction, Item, Origin, Reference, Resolver, Symbol, SymbolKind};
-pub use diagnostic::{Diagnostic, Severity};
+pub use diagnostic::{Diagnostic, Fix, Severity};
 pub use line_index::{Encoding, LineCol, LineIndex};
 pub use resolver::{FsResolver, canonical, normalize};
 pub use suggest::suggest;

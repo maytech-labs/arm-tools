@@ -1,6 +1,9 @@
 //! arm-sema's contract: what it defines, resolves, and reports, checked
 //! against clang where clang has an opinion (docs/decisions/0007-testing.md).
 
+// Test helpers may panic on broken fixtures (AGENTS.md: expect is fine in tests).
+#![allow(clippy::expect_used)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -171,6 +174,28 @@ _f:
     ret
 ";
     assert_eq!(Analysis::new(text).diagnostics(), []);
+}
+
+/// The text after applying the first diagnostic's fix.
+fn fixed(text: &str) -> String {
+    let analysis = Analysis::new(text);
+    let fix = analysis.diagnostics()[0].fix.clone().expect("a fix");
+    let mut out = text.to_string();
+    for (range, new) in fix.edits.iter().rev() {
+        out.replace_range(range.clone(), new);
+    }
+    out
+}
+
+#[test]
+fn suggestions_come_with_fixes() {
+    assert_eq!(fixed("movv x0, x1\n"), "mov x0, x1\n");
+    assert_eq!(fixed(".globll _f\n"), ".global _f\n");
+    assert_eq!(fixed("b.eqq _f\n"), "b.eq _f\n");
+    assert_eq!(fixed(".type _f, @function\nret\n"), "\nret\n");
+    // No suggestion, no fix.
+    let analysis = Analysis::new("frobnicate x0\n");
+    assert!(analysis.diagnostics()[0].fix.is_none());
 }
 
 #[test]

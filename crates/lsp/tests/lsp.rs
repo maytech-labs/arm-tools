@@ -238,6 +238,8 @@ fn advertises_capabilities_and_negotiates_encoding() {
         "renameProvider",
         "semanticTokensProvider",
         "documentFormattingProvider",
+        "codeActionProvider",
+        "foldingRangeProvider",
     ] {
         assert!(!caps[capability].is_null(), "missing {capability}");
     }
@@ -446,6 +448,56 @@ fn formatting() {
     )["result"]
         .clone();
     assert_eq!(none, json!([]));
+    assert!(client.shutdown().success());
+}
+
+#[test]
+fn quick_fixes_and_folding() {
+    let mut client = Client::start(true);
+    client.open(
+        ".globl _f\n_f:\n    movv x0, x1\n    sub sp, sp, #24\n    add sp, sp, #32\n    ret\n",
+    );
+    let actions = client.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": URI },
+            "range": { "start": start(2, 4), "end": start(2, 4) },
+            "context": { "diagnostics": [] },
+        }),
+    )["result"]
+        .clone();
+    let actions = actions.as_array().cloned().unwrap_or_default();
+    assert_eq!(actions.len(), 1, "{actions:?}");
+    assert_eq!(actions[0]["title"], "Change to 'mov'");
+    assert_eq!(actions[0]["kind"], "quickfix");
+    let edit = &actions[0]["edit"]["changes"][URI][0];
+    assert_eq!(edit["newText"], "mov");
+    assert_eq!(edit["range"]["start"], start(2, 4));
+
+    let actions = client.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": URI },
+            "range": { "start": start(3, 0), "end": start(3, 20) },
+            "context": { "diagnostics": [] },
+        }),
+    )["result"]
+        .clone();
+    let titles: Vec<&str> = actions
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a["title"].as_str())
+        .collect();
+    assert!(titles.contains(&"Round to 32"), "{titles:?}");
+
+    let folds = client.request(
+        "textDocument/foldingRange",
+        json!({ "textDocument": { "uri": URI } }),
+    )["result"]
+        .clone();
+    assert_eq!(folds[0]["startLine"], 1);
+    assert_eq!(folds[0]["endLine"], 5);
     assert!(client.shutdown().success());
 }
 

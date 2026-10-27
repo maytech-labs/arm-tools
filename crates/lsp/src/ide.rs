@@ -438,6 +438,85 @@ pub fn outline(analysis: &Analysis) -> Vec<OutlineItem> {
     items
 }
 
+/// Line ranges that can fold: `.macro`, `.rept`, `.irp`, `.irpc`, and `.if`
+/// blocks, the code under each label, and runs of two or more comment lines.
+/// Each is (first line, last line), zero-based.
+pub fn folding_ranges(analysis: &Analysis) -> Vec<(u32, u32)> {
+    let text = analysis.text();
+    let line_of = |offset: usize| {
+        analysis
+            .line_index()
+            .line_col(text, offset, arm_sema::Encoding::Utf8)
+            .line
+    };
+    let mut out = Vec::new();
+    // Blocks, by matching openers and closers.
+    let mut open: Vec<(&'static str, u32)> = Vec::new();
+    for statement in analysis.parse().tree().statements() {
+        let arm_syntax::ast::Statement::Directive(directive) = statement else {
+            continue;
+        };
+        let Some(name) = directive.name() else {
+            continue;
+        };
+        let line = line_of(usize::from(name.text_range().start()));
+        let lower = name.text().to_ascii_lowercase();
+        match lower.as_str() {
+            ".macro" => open.push((".endm", line)),
+            ".rept" | ".rep" | ".irp" | ".irpc" => open.push((".endr", line)),
+            l if l.starts_with(".if") => open.push((".endif", line)),
+            ".endm" | ".endmacro" | ".endr" | ".endif" => {
+                let closer = if lower == ".endmacro" {
+                    ".endm"
+                } else {
+                    lower.as_str()
+                };
+                if let Some(i) = open.iter().rposition(|(c, _)| *c == closer) {
+                    let (_, start) = open.remove(i);
+                    if line > start {
+                        out.push((start, line));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // The code under each label, up to the line before the next.
+    for item in outline(analysis) {
+        if item.kind == SymbolKind::Label {
+            let start = line_of(item.range.start);
+            let end = line_of(item.range.end.saturating_sub(1));
+            if end > start {
+                out.push((start, end));
+            }
+        }
+    }
+    // Runs of full-line comments.
+    let mut run: Option<(u32, u32)> = None;
+    for (line, content) in text.lines().enumerate() {
+        let line = u32::try_from(line).unwrap_or(u32::MAX);
+        let trimmed = content.trim_start();
+        let comment =
+            trimmed.starts_with("//") || trimmed.starts_with(';') || trimmed.starts_with('#');
+        match (comment, run) {
+            (true, Some((start, _))) => run = Some((start, line)),
+            (true, None) => run = Some((line, line)),
+            (false, Some((start, end))) => {
+                if end > start {
+                    out.push((start, end));
+                }
+                run = None;
+            }
+            (false, None) => {}
+        }
+    }
+    if let Some((start, end)) = run.filter(|(s, e)| e > s) {
+        out.push((start, end));
+    }
+    out.sort_unstable();
+    out
+}
+
 /// Kinds of highlighted token, in the order of the legend `armls` sends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
@@ -800,6 +879,13 @@ mod tests {
         assert_eq!(kind("; hi"), Some(TokenType::Comment));
         assert_eq!(kind(".p2align"), Some(TokenType::Macro));
         assert_eq!(kind("PAGE"), Some(TokenType::Decorator));
+    }
+
+    #[test]
+    fn folding_blocks_labels_and_comments() {
+        let text = "// one\n// two\n.macro m\n  nop\n.endm\n_f:\n  nop\n  ret\n_g:\n  ret\n";
+        let ranges = folding_ranges(&Analysis::new(text));
+        assert_eq!(ranges, [(0, 1), (2, 4), (5, 7), (8, 9)]);
     }
 
     #[test]

@@ -70,6 +70,7 @@ pub fn lint(analysis: &Analysis, config: &Config) -> Vec<Diagnostic> {
             severity,
             code: info.id,
             message: finding.message,
+            fix: finding.fix,
         });
     }
     out.sort_by_key(|d| (d.range.start, d.range.end));
@@ -82,6 +83,7 @@ pub(crate) struct Finding {
     pub rule: &'static str,
     pub range: std::ops::Range<usize>,
     pub message: String,
+    pub fix: Option<arm_sema::Fix>,
 }
 
 /// Lines with `armtool: allow(a, b)` in a comment, and the rule IDs they name.

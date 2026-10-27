@@ -31,5 +31,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - armls publishes lint findings, using the nearest `armtool.toml`.
 - `.include` is followed: included macros, constants, aliases, and labels are known, with go to definition across files and unsaved buffers in armls. `[include] paths` in armtool.toml. Include cycles are errors; missing includes are warnings.
 - `armtool fmt` and formatting in armls: aligned mnemonics, operands, and comments, changing only whitespace (proved by byte-identical objects from clang). `[format]` in armtool.toml.
-- Design doc, roadmap, and ADRs 0001 to 0020.
+- Quick fixes: suggested instructions, directives, and conditions, ELF directive removal, stack rounding, page-offset variants, and the missing `add` after `adrp`. Code actions in armls; `armtool check --fix` and `lint --fix`.
+- Folding ranges in armls: macro, repeat, and conditional blocks, label sections, and comment runs.
+- Design doc, roadmap, and ADRs 0001 to 0021.
 - `cargo xtask check` and CI on macOS and Linux.

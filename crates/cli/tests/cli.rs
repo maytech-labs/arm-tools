@@ -227,6 +227,25 @@ fn fmt_rewrites_and_check_only_reports() {
 }
 
 #[test]
+fn fix_applies_suggestions_and_reports_whats_left() {
+    let dir = Dir::new("fix");
+    let file = dir.file(
+        "a.s",
+        ".globl _f\n_f:\n    movv x0, x1\n    sub sp, sp, #24\n    add sp, sp, #32\n    mov x18, #1\n    ret\n",
+    );
+    let output = armtool(&["lint", "--fix", "a.s"], &dir.0);
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read"),
+        ".globl _f\n_f:\n    mov x0, x1\n    sub sp, sp, #32\n    add sp, sp, #32\n    mov x18, #1\n    ret\n"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("fixed 2"));
+    // x18 has no automatic fix, so it's still reported.
+    let text = stdout(&output);
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("abi/x18-reserved"));
+}
+
+#[test]
 fn rules_and_explain() {
     let dir = Dir::new("rules");
     let output = armtool(&["rules"], &dir.0);

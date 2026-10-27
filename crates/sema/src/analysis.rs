@@ -497,16 +497,24 @@ impl Builder<'_> {
         }
         if !in_body && !arm_isa::is_directive(&name) {
             let mut message = format!("unknown directive '{}'", name_token.text());
+            let mut fix = None;
             if ELF_ONLY.contains(&name.as_str()) {
                 message.push_str(": it's ELF only, and macOS uses Mach-O. Remove it");
+                fix = Some(crate::Fix {
+                    title: format!("Remove the {name} line"),
+                    edits: vec![(node_range(directive.syntax()), String::new())],
+                });
             } else if let Some(better) = suggest(&name, arm_isa::directives()) {
                 message.push_str(&format!(": did you mean '{better}'?"));
+                fix = Some(crate::Fix {
+                    title: format!("Change to '{better}'"),
+                    edits: vec![(range(&name_token), better.to_string())],
+                });
             }
-            self.diagnostics.push(Diagnostic::error(
-                range(&name_token),
-                "unknown-directive",
-                message,
-            ));
+            let mut diagnostic =
+                Diagnostic::error(range(&name_token), "unknown-directive", message);
+            diagnostic.fix = fix;
+            self.diagnostics.push(diagnostic);
         }
         match name.as_str() {
             ".include" => self.include(directive, &args, &name_token),
@@ -573,6 +581,7 @@ impl Builder<'_> {
                 range: at,
                 severity: Severity::Warning,
                 code: "include-not-found",
+                fix: None,
                 message: format!(
                     "can't find '{target}' from the project root, the [include] paths in armtool.toml, or this file's directory. Clang looks relative to the directory it runs in and -I paths: add the directory to [include] paths"
                 ),
@@ -753,14 +762,14 @@ impl Builder<'_> {
                 return true;
             }
             let mut message = format!("invalid condition code '{condition}'");
+            let mut diagnostic = Diagnostic::error(range(token), "invalid-condition", "");
             if let Some(better) = suggest(condition, CONDITION_CODES.iter().copied()) {
                 message.push_str(&format!(": did you mean '{better}'?"));
+                let fixed = format!("{}.{better}", mnemonic.head);
+                diagnostic = diagnostic.replace_with(format!("Change to '{fixed}'"), fixed);
             }
-            self.diagnostics.push(Diagnostic::error(
-                range(token),
-                "invalid-condition",
-                message,
-            ));
+            diagnostic.message = message;
+            self.diagnostics.push(diagnostic);
             return false;
         }
         if self.find(text, SymbolKind::Macro).is_some() {
@@ -780,24 +789,24 @@ impl Builder<'_> {
             return false;
         }
         let mut message = format!("unknown instruction '{text}'");
-        if let Some(better) = suggest(&mnemonic.head, arm_isa::mnemonics()) {
+        let better = suggest(&mnemonic.head, arm_isa::mnemonics());
+        if let Some(better) = better {
             message.push_str(&format!(": did you mean '{better}'?"));
         }
-        if self.has_include {
+        let severity = if self.has_include {
             message.push_str(" If a file included above defines it as a macro, ignore this.");
-            self.diagnostics.push(Diagnostic {
-                range: range(token),
-                severity: Severity::Warning,
-                code: "unknown-instruction",
-                message,
-            });
+            Severity::Warning
         } else {
-            self.diagnostics.push(Diagnostic::error(
-                range(token),
-                "unknown-instruction",
-                message,
-            ));
+            Severity::Error
+        };
+        let mut diagnostic = Diagnostic {
+            severity,
+            ..Diagnostic::error(range(token), "unknown-instruction", message)
+        };
+        if let Some(better) = better {
+            diagnostic = diagnostic.replace_with(format!("Change to '{better}'"), better);
         }
+        self.diagnostics.push(diagnostic);
         false
     }
 

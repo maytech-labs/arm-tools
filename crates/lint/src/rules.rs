@@ -94,7 +94,7 @@ pub(crate) fn run(analysis: &Analysis) -> Vec<Finding> {
         // be laid out anywhere in the file.
         let (reached, opaque) = cfg.reachable(analysis, entry);
         let insns: Vec<&Instruction> = reached.iter().map(|&i| cfg.insns[i]).collect();
-        adrp(&insns, &mut out);
+        adrp(analysis, &insns, &mut out);
         // Code we can't see, like a macro call, would make these guesses.
         if opaque {
             continue;
@@ -111,7 +111,18 @@ fn finding(rule: &'static str, range: std::ops::Range<usize>, message: String) -
         rule,
         range,
         message,
+        fix: None,
     }
+}
+
+/// A finding with a quick fix.
+fn fixed(
+    mut finding: Finding,
+    title: String,
+    edits: Vec<(std::ops::Range<usize>, String)>,
+) -> Finding {
+    finding.fix = Some(arm_sema::Fix { title, edits });
+    finding
 }
 
 fn x18(analysis: &Analysis, out: &mut Vec<Finding>) {
@@ -147,14 +158,28 @@ fn stack_alignment(analysis: &Analysis, out: &mut Vec<Finding>) {
             && n % 16 != 0
         {
             let rounded = (n.abs() + 15) / 16 * 16;
-            out.push(finding(
-                    "abi/stack-alignment",
-                    insn.range.clone(),
-                    format!(
-                        "this moves sp by {} bytes, which isn't a multiple of 16, so sp loses its required 16-byte alignment. Use {rounded}",
-                        n.abs()
-                    ),
-                ));
+            let mut found = finding(
+                "abi/stack-alignment",
+                insn.range.clone(),
+                format!(
+                    "this moves sp by {} bytes, which isn't a multiple of 16, so sp loses its required 16-byte alignment. Use {rounded}",
+                    n.abs()
+                ),
+            );
+            // `add sp, sp, #n` and `sub sp, sp, #n`: the immediate is its own operand.
+            let immediate = operands(insn)
+                .iter()
+                .position(|o| matches!(o, Operand::Imm(Imm::Constant(_))))
+                .filter(|_| matches!(insn.mnemonic.head.as_str(), "add" | "sub"))
+                .and_then(|i| insn.operand_ranges.get(i).cloned());
+            if let Some(at) = immediate {
+                found = fixed(
+                    found,
+                    format!("Round to {rounded}"),
+                    vec![(at, format!("#{rounded}"))],
+                );
+            }
+            out.push(found);
         }
     }
 }
@@ -303,7 +328,8 @@ fn callee_saved(function: &Function, insns: &[&Instruction], out: &mut Vec<Findi
 }
 
 /// adrp's page with no offset added, or the wrong offset variant.
-fn adrp(insns: &[&Instruction], out: &mut Vec<Finding>) {
+fn adrp(analysis: &Analysis, insns: &[&Instruction], out: &mut Vec<Finding>) {
+    let text = analysis.text();
     for (i, insn) in insns.iter().enumerate() {
         if insn.mnemonic.head != "adrp" {
             continue;
@@ -345,16 +371,29 @@ fn adrp(insns: &[&Instruction], out: &mut Vec<Finding>) {
             if let (true, Some((k, found))) = (uses_dest, offset) {
                 paired = true;
                 if found != expected {
-                    out.push(finding(
+                    let at = later.operand_ranges[k].clone();
+                    let mut finding = finding(
                         "addr/variant-mismatch",
-                        later.operand_ranges[k].clone(),
+                        at.clone(),
                         format!(
                             "'{name}@{}' pairs with @{}, not @{}: the address points somewhere else",
                             variant.to_uppercase(),
                             expected.to_uppercase(),
                             found.to_uppercase()
                         ),
-                    ));
+                    );
+                    // Only when the operand is exactly `name@VARIANT`, so an
+                    // addend isn't lost.
+                    let written = text.get(at.clone()).unwrap_or_default();
+                    if written.eq_ignore_ascii_case(&format!("{name}@{found}")) {
+                        let replacement = format!("{name}@{}", expected.to_uppercase());
+                        finding = fixed(
+                            finding,
+                            format!("Change to {replacement}"),
+                            vec![(at, replacement)],
+                        );
+                    }
+                    out.push(finding);
                 }
                 break;
             }
@@ -363,13 +402,34 @@ fn adrp(insns: &[&Instruction], out: &mut Vec<Finding>) {
             }
         }
         if !paired {
-            out.push(finding(
+            let register = insn
+                .operand_ranges
+                .first()
+                .and_then(|r| text.get(r.clone()))
+                .unwrap_or(dest.as_str());
+            let add = format!(
+                "add {register}, {register}, {name}@{}",
+                expected.to_uppercase()
+            );
+            let found = finding(
                 "addr/adrp-pageoff",
-                insn.operand_ranges.get(1).cloned().unwrap_or(insn.range.clone()),
-                format!(
-                    "adrp loads only the 4 KB page of '{name}'. Add the offset: add {dest}, {dest}, {name}@{}",
-                    expected.to_uppercase()
-                ),
+                insn.operand_ranges
+                    .get(1)
+                    .cloned()
+                    .unwrap_or(insn.range.clone()),
+                format!("adrp loads only the 4 KB page of '{name}'. Add the offset: {add}"),
+            );
+            // Insert the add on the next line, indented like the adrp.
+            let line_start = text[..insn.range.start].rfind('\n').map_or(0, |i| i + 1);
+            let indent: String = text[line_start..insn.range.start]
+                .chars()
+                .take_while(|c| c.is_whitespace())
+                .collect();
+            let at = insn.range.end..insn.range.end;
+            out.push(fixed(
+                found,
+                format!("Add `{add}`"),
+                vec![(at, format!("\n{indent}{add}"))],
             ));
         }
     }
@@ -588,6 +648,46 @@ _main:
         // mov sp, x29 is a restore we don't follow: no guess.
         let restore = ".globl _f\n_f:\n  sub sp, sp, #16\n  mov sp, x29\n  ret\n";
         assert!(rules(restore).is_empty());
+    }
+
+    /// Applies a finding's fix to the text.
+    fn apply_fix(text: &str, rule: &str) -> String {
+        let found = lint(&Analysis::new(text), &Config::default());
+        let fix = found
+            .iter()
+            .find(|d| d.code == rule)
+            .and_then(|d| d.fix.clone())
+            .expect("a fix");
+        let mut out = text.to_string();
+        for (range, new) in fix.edits.iter().rev() {
+            out.replace_range(range.clone(), new);
+        }
+        out
+    }
+
+    #[test]
+    fn fixes() {
+        assert_eq!(
+            apply_fix(
+                ".globl _f\n_f:\n  sub sp, sp, #24\n  add sp, sp, #24\n  ret\n",
+                "abi/stack-alignment"
+            ),
+            ".globl _f\n_f:\n  sub sp, sp, #32\n  add sp, sp, #24\n  ret\n"
+        );
+        assert_eq!(
+            apply_fix(
+                ".globl _f\n_f:\n  adrp x8, _v@GOTPAGE\n  ldr x8, [x8, _v@PAGEOFF]\n  ret\n",
+                "addr/variant-mismatch"
+            ),
+            ".globl _f\n_f:\n  adrp x8, _v@GOTPAGE\n  ldr x8, [x8, _v@GOTPAGEOFF]\n  ret\n"
+        );
+        assert_eq!(
+            apply_fix(
+                ".globl _f\n_f:\n    adrp x0, _msg@PAGE\n    ret\n",
+                "addr/adrp-pageoff"
+            ),
+            ".globl _f\n_f:\n    adrp x0, _msg@PAGE\n    add x0, x0, _msg@PAGEOFF\n    ret\n"
+        );
     }
 
     #[test]

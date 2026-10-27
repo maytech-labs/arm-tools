@@ -12,9 +12,9 @@ use lsp_types::notification::{
     PublishDiagnostics,
 };
 use lsp_types::request::{
-    Completion, DocumentHighlightRequest, DocumentSymbolRequest, Formatting, GotoDefinition,
-    HoverRequest, PrepareRenameRequest, References, Rename, Request as _,
-    SemanticTokensFullRequest,
+    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
+    FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, PrepareRenameRequest,
+    References, Rename, Request as _, SemanticTokensFullRequest,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
@@ -107,6 +107,8 @@ fn capabilities(encoding: Encoding) -> ServerCapabilities {
         document_highlight_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         document_formatting_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
+        folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -150,6 +152,8 @@ fn legend() -> SemanticTokensLegend {
 
 struct Document {
     analysis: Analysis,
+    /// What was published, with fixes, for code actions.
+    diagnostics: Vec<arm_sema::Diagnostic>,
 }
 
 struct Server<'c> {
@@ -242,6 +246,7 @@ impl Server<'_> {
                 severity: Severity::Warning,
                 code: "config",
                 message: format!("{error}. Lint rules are off until it's fixed."),
+                fix: None,
             }),
         }
         found.sort_by_key(|d| (d.range.start, d.range.end));
@@ -261,7 +266,13 @@ impl Server<'_> {
                 ..lsp_types::Diagnostic::default()
             })
             .collect();
-        self.documents.insert(uri.clone(), Document { analysis });
+        self.documents.insert(
+            uri.clone(),
+            Document {
+                analysis,
+                diagnostics: found,
+            },
+        );
         self.publish(uri, diagnostics)
     }
 
@@ -453,6 +464,61 @@ impl Server<'_> {
                     }]
                 };
                 Ok(ok(id, Some(edits)))
+            }
+            CodeActionRequest::METHOD => {
+                let params: lsp_types::CodeActionParams = params(request)?;
+                let uri = &params.text_document.uri;
+                let Some(doc) = self.documents.get(uri) else {
+                    return Ok(ok(id, None::<lsp_types::CodeActionResponse>));
+                };
+                let wanted = &params.range;
+                let actions: lsp_types::CodeActionResponse = doc
+                    .diagnostics
+                    .iter()
+                    .filter_map(|d| {
+                        let fix = d.fix.as_ref()?;
+                        let range = self.range(&doc.analysis, d.range.clone());
+                        let overlaps = range.start <= wanted.end && wanted.start <= range.end;
+                        if !overlaps {
+                            return None;
+                        }
+                        let edits = fix
+                            .edits
+                            .iter()
+                            .map(|(r, new_text)| TextEdit {
+                                range: self.range(&doc.analysis, r.clone()),
+                                new_text: new_text.clone(),
+                            })
+                            .collect();
+                        Some(lsp_types::CodeActionOrCommand::CodeAction(
+                            lsp_types::CodeAction {
+                                title: fix.title.clone(),
+                                kind: Some(lsp_types::CodeActionKind::QUICKFIX),
+                                edit: Some(WorkspaceEdit {
+                                    changes: Some(HashMap::from([(uri.clone(), edits)])),
+                                    ..WorkspaceEdit::default()
+                                }),
+                                is_preferred: Some(true),
+                                ..lsp_types::CodeAction::default()
+                            },
+                        ))
+                    })
+                    .collect();
+                Ok(ok(id, Some(actions)))
+            }
+            FoldingRangeRequest::METHOD => {
+                let params: lsp_types::FoldingRangeParams = params(request)?;
+                let result = self.documents.get(&params.text_document.uri).map(|doc| {
+                    ide::folding_ranges(&doc.analysis)
+                        .into_iter()
+                        .map(|(start, end)| lsp_types::FoldingRange {
+                            start_line: start,
+                            end_line: end,
+                            ..lsp_types::FoldingRange::default()
+                        })
+                        .collect::<Vec<_>>()
+                });
+                Ok(ok(id, result))
             }
             method => Err(Failure::MethodNotFound(method.to_string())),
         }

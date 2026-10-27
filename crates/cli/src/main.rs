@@ -11,9 +11,11 @@ const HELP: &str = "\
 armtool: check and lint AArch64 assembly for macOS
 
 Usage:
-  armtool check [--json] <path>...    Syntax, symbol, and operand errors, as clang reports them
-  armtool lint [--json] [--config <file>] <path>...
-                                      check, plus the lint rules
+  armtool check [--json] [--fix] <path>...
+                                      Syntax, symbol, and operand errors, as clang reports them
+  armtool lint [--json] [--fix] [--config <file>] <path>...
+                                      check, plus the lint rules; --fix applies
+                                      the fixes they suggest, in place
   armtool fmt [--check] <path>...     Format files in place; --check lists files that
                                       need formatting and changes nothing
   armtool rules                       List the lint rules
@@ -97,12 +99,14 @@ fn level_name(level: arm_lint::Level) -> &'static str {
 
 fn run(args: &[String], lint: bool) -> ExitCode {
     let mut json = false;
+    let mut fix = false;
     let mut config_path = None;
     let mut paths = Vec::new();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => json = true,
+            "--fix" => fix = true,
             "--config" if lint => match args.next() {
                 Some(path) => config_path = Some(PathBuf::from(path)),
                 None => return usage("--config needs a file"),
@@ -168,11 +172,25 @@ fn run(args: &[String], lint: bool) -> ExitCode {
             dirs: config.include_dirs(&path),
             open: Default::default(),
         };
-        let analysis = Analysis::with_includes(&text, Some(path), &resolver);
-        let mut diagnostics: Vec<Diagnostic> = analysis.diagnostics().to_vec();
-        if lint {
-            diagnostics.extend(arm_lint::lint(&analysis, &config));
-            diagnostics.sort_by_key(|d| (d.range.start, d.range.end));
+        let diagnose = |text: &str| {
+            let analysis = Analysis::with_includes(text, Some(path.clone()), &resolver);
+            let mut diagnostics: Vec<Diagnostic> = analysis.diagnostics().to_vec();
+            if lint {
+                diagnostics.extend(arm_lint::lint(&analysis, &config));
+                diagnostics.sort_by_key(|d| (d.range.start, d.range.end));
+            }
+            (analysis, diagnostics)
+        };
+        let (mut analysis, mut diagnostics) = diagnose(&text);
+        let mut text = text;
+        if fix && let Some(fixed) = apply_fixes(&text, &diagnostics) {
+            if let Err(error) = std::fs::write(file, &fixed.0) {
+                eprintln!("armtool: can't write {}: {error}", file.display());
+                return ExitCode::from(2);
+            }
+            eprintln!("armtool: fixed {} in {}", fixed.1, file.display());
+            text = fixed.0;
+            (analysis, diagnostics) = diagnose(&text);
         }
         for d in &diagnostics {
             failed |= matches!(d.severity, Severity::Error | Severity::Warning);
@@ -286,6 +304,34 @@ fn fmt(args: &[String]) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Applies every fix that doesn't overlap an earlier one. Returns the new
+/// text and how many fixes went in, or None if there were none.
+fn apply_fixes(text: &str, diagnostics: &[Diagnostic]) -> Option<(String, usize)> {
+    let mut edits: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
+    let mut applied = 0;
+    for fix in diagnostics.iter().filter_map(|d| d.fix.as_ref()) {
+        let overlaps = fix.edits.iter().any(|(r, _)| {
+            edits
+                .iter()
+                .any(|(e, _)| r.start < e.end.max(e.start + 1) && e.start < r.end.max(r.start + 1))
+        });
+        if overlaps {
+            continue;
+        }
+        edits.extend(fix.edits.iter().map(|(r, t)| (r.clone(), t.as_str())));
+        applied += 1;
+    }
+    if applied == 0 {
+        return None;
+    }
+    edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+    let mut out = text.to_string();
+    for (range, new) in edits {
+        out.replace_range(range, new);
+    }
+    Some((out, applied))
 }
 
 fn usage(message: &str) -> ExitCode {

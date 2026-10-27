@@ -63,7 +63,8 @@ Done when Neovim and VS Code show diagnostics, hover, definition, references, co
 - [x] Diagnostics, hover, definition, references, symbols
 - [x] Completion, semantic tokens
 - [x] Rename, document highlight
-- [ ] Folding, inlay hints, code actions
+- [x] Folding ranges and quick-fix code actions ([0021](decisions/0021-quick-fixes.md))
+- [ ] Inlay hints
 - [x] `editors/` setup for Neovim and Helix, `make install`, and `cargo xtask nvim-smoke`
 - [ ] VS Code extension
 
@@ -75,7 +76,7 @@ Done when the first rules in the design run in `armls` and `armtool lint`, each 
 - [x] File-wide control-flow graph, functions by reachability, sp dataflow
 - [x] The first rules: [lint.md](lint.md)
 - [x] `armtool check`, `lint --json`, `rules`, `explain`; lint in armls
-- [ ] Code actions for fixes
+- [x] Code actions for fixes, and `armtool lint --fix`
 - [ ] More rules: syscall conventions, x16/x17 across calls, reads of undefined registers
 
 ## M6: formatter
