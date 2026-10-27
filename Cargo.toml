@@ -8,8 +8,8 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT"
 authors = ["Trammel May"]
-repository = "https://github.com/trammel-may/arm-tools"
-homepage = "https://github.com/trammel-may/arm-tools"
+repository = "https://github.com/maytech-labs/arm-tools"
+homepage = "https://github.com/maytech-labs/arm-tools"
 
 [workspace.dependencies]
 arm-syntax = { path = "crates/syntax" }

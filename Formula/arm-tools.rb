@@ -1,15 +1,15 @@
 # Homebrew formula for armls and armtool. This repo is its own tap:
-#   brew tap trammel-may/arm-tools https://github.com/trammel-may/arm-tools
+#   brew tap maytech-labs/arm-tools https://github.com/maytech-labs/arm-tools
 #   brew install --HEAD arm-tools
 # HEAD-only until the first release (docs/decisions/0025-distribution.md).
 class ArmTools < Formula
   desc "Language server, linter, and formatter for AArch64 assembly on macOS"
-  homepage "https://github.com/trammel-may/arm-tools"
+  homepage "https://github.com/maytech-labs/arm-tools"
   license all_of: [
     "MIT",
     "Apache-2.0" => { with: "LLVM-exception" },
   ]
-  head "https://github.com/trammel-may/arm-tools.git", branch: "main"
+  head "https://github.com/maytech-labs/arm-tools.git", branch: "main"
 
   depends_on "rust" => :build
   depends_on :macos

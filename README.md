@@ -27,7 +27,7 @@ The linter goes past syntax: ABI rules (callee-saved registers, x18, stack align
 With Homebrew, once the repo is public (builds the latest `main`):
 
 ```sh
-brew tap trammel-may/arm-tools https://github.com/trammel-may/arm-tools
+brew tap maytech-labs/arm-tools https://github.com/maytech-labs/arm-tools
 brew install --HEAD arm-tools
 ```
 
