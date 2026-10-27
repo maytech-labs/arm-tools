@@ -67,6 +67,7 @@ Done when Neovim and VS Code show diagnostics, hover, definition, references, co
 - [ ] Index C function definitions, for calls from assembly into C
 - [x] Folding ranges and quick-fix code actions ([0021](decisions/0021-quick-fixes.md))
 - [x] Inlay hints: constant values and syscall names ([0028](decisions/0028-inlay-hints.md))
+- [x] Signature help, and completion of what each operand accepts ([0030](decisions/0030-operand-aware-editing.md))
 - [x] `editors/` setup for Neovim and Helix, `make install`, and `cargo xtask nvim-smoke`
 
 ## M5: linter

@@ -15,6 +15,7 @@ use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
     FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, InlayHintRequest,
     PrepareRenameRequest, References, Rename, Request as _, SemanticTokensFullRequest,
+    SignatureHelpRequest,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
@@ -25,7 +26,8 @@ use lsp_types::{
     PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, SemanticToken,
     SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
     SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SymbolKind as LspSymbolKind,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, SignatureInformation, SymbolKind as LspSymbolKind,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
     WorkspaceEdit,
 };
@@ -125,8 +127,12 @@ fn capabilities(encoding: Encoding) -> ServerCapabilities {
         workspace_symbol_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
-            trigger_characters: Some(vec![".".into()]),
+            trigger_characters: Some(vec![".".into(), "[".into()]),
             ..CompletionOptions::default()
+        }),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec![" ".into(), ",".into(), "[".into()]),
+            ..SignatureHelpOptions::default()
         }),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
@@ -394,12 +400,27 @@ impl Server<'_> {
                 let result = self
                     .at(&params.text_document_position)
                     .map(|(doc, offset)| {
-                        let items = ide::completions(&doc.analysis, offset)
+                        let globals = self.index.global_names();
+                        let items = ide::completions(&doc.analysis, offset, &globals)
                             .into_iter()
-                            .map(completion_item)
+                            .enumerate()
+                            .map(|(i, c)| CompletionItem {
+                                // Keep our order: x2 before x10.
+                                sort_text: Some(format!("{i:05}")),
+                                ..completion_item(c)
+                            })
                             .collect();
                         CompletionResponse::Array(items)
                     });
+                Ok(ok(id, result))
+            }
+            SignatureHelpRequest::METHOD => {
+                let params: SignatureHelpParams = params(request)?;
+                let encoding = self.encoding;
+                let result = self
+                    .at(&params.text_document_position_params)
+                    .and_then(|(doc, offset)| ide::signature_help(&doc.analysis, offset))
+                    .map(|help| signature_help(help, encoding));
                 Ok(ok(id, result))
             }
             GotoDefinition::METHOD => {
@@ -872,6 +893,48 @@ fn params<P: serde::de::DeserializeOwned>(request: Request) -> std::result::Resu
 
 fn ok<R: serde::Serialize>(id: RequestId, result: R) -> Response {
     Response::new_ok(id, result)
+}
+
+/// Parameters are given as offsets into the label, in the position encoding.
+fn signature_help(help: ide::SignatureHelp, encoding: Encoding) -> SignatureHelp {
+    let units = |s: &str| -> u32 {
+        let n = match encoding {
+            Encoding::Utf8 => s.len(),
+            Encoding::Utf16 => s.encode_utf16().count(),
+        };
+        u32::try_from(n).unwrap_or(u32::MAX)
+    };
+    let signatures = help
+        .signatures
+        .into_iter()
+        .map(|(parts, active)| {
+            let mut at = units(&parts.head) + 1;
+            let parameters = parts
+                .params
+                .iter()
+                .map(|param| {
+                    let end = at + units(param);
+                    let info = lsp_types::ParameterInformation {
+                        label: lsp_types::ParameterLabel::LabelOffsets([at, end]),
+                        documentation: None,
+                    };
+                    at = end + 2;
+                    info
+                })
+                .collect();
+            SignatureInformation {
+                label: parts.label(),
+                documentation: None,
+                parameters: Some(parameters),
+                active_parameter: active.and_then(|a| u32::try_from(a).ok()),
+            }
+        })
+        .collect();
+    SignatureHelp {
+        signatures,
+        active_signature: Some(0),
+        active_parameter: None,
+    }
 }
 
 fn completion_item(completion: ide::Completion) -> CompletionItem {

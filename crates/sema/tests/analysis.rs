@@ -418,3 +418,45 @@ fn macro_calls_resolve_to_the_macro() {
     let symbol = analysis.symbol_at(call).expect("resolves");
     assert_eq!(analysis.symbols()[symbol].kind, SymbolKind::Macro);
 }
+
+#[test]
+fn partial_operands_for_editors() {
+    use arm_isa::Operand;
+    let analysis = Analysis::new("size = 16\nbase .req x9\n");
+    let names = |before: &str| -> Option<Vec<String>> {
+        let ops = analysis.partial_operands(before)?;
+        Some(
+            ops.iter()
+                .map(|o| match o {
+                    Operand::Token(t) => t.clone(),
+                    Operand::Register(r) => r.register.name().to_string(),
+                    Operand::Imm(arm_isa::Imm::Constant(v)) => format!("#{v}"),
+                    other => format!("{other:?}"),
+                })
+                .collect(),
+        )
+    };
+    assert_eq!(names(""), Some(vec![]));
+    // The operand under the cursor is left out.
+    assert_eq!(names("x0"), Some(vec![]));
+    assert_eq!(names("x0, x"), Some(vec!["x0".into()]));
+    // An open bracket is closed for parsing, and the closer dropped.
+    assert_eq!(
+        names("x0, [base, "),
+        Some(vec!["x0".into(), "[".into(), "x9".into()])
+    );
+    assert_eq!(names("x0, ["), Some(vec!["x0".into(), "[".into()]));
+    assert_eq!(
+        names("x0, [sp], "),
+        Some(vec!["x0".into(), "[".into(), "sp".into(), "]".into()])
+    );
+    // Constants resolve.
+    assert_eq!(names("x0, #size, "), Some(vec!["x0".into(), "#16".into()]));
+    // Inside a vector list nothing is judged.
+    assert_eq!(names("{v0.16b, "), None);
+    assert_eq!(
+        names("{v0.16b, v1.16b}, ").map(|n| n.len()),
+        Some(1),
+        "a closed list is one operand"
+    );
+}

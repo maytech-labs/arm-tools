@@ -16,6 +16,8 @@ mod encoding;
 mod names;
 mod registers;
 
+pub use names::{BARRIER_OPTIONS, SVE_PATTERNS, prefetch_operations};
+
 use crate::operand::{Check, Imm, Operand, RegisterOperand};
 use crate::{Register, RegisterKind};
 

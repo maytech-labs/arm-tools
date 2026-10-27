@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::ops::Range;
 
-use arm_isa::{Mnemonic, Register, Special, Syntax};
+use arm_isa::{ClassKind, Form, Mnemonic, OperandClass, Register, RegisterKind, Special, Syntax};
 use arm_sema::{Analysis, Symbol, SymbolKind};
 use arm_syntax::{NodeOrToken, SyntaxKind, SyntaxToken, TextRange};
 
@@ -165,8 +165,10 @@ pub struct Completion {
 }
 
 /// Completions at a byte offset: instructions, macros, and directives where a
-/// statement starts, registers and symbols in operands.
-pub fn completions(analysis: &Analysis, offset: usize) -> Vec<Completion> {
+/// statement starts, and in operands what the instruction's forms accept
+/// there (docs/decisions/0030-operand-aware-editing.md). `globals` are labels
+/// other files in the project define.
+pub fn completions(analysis: &Analysis, offset: usize, globals: &[String]) -> Vec<Completion> {
     let text = analysis.text();
     let offset = offset.min(text.len());
     if in_comment_or_string(analysis, offset) {
@@ -189,10 +191,11 @@ pub fn completions(analysis: &Analysis, offset: usize) -> Vec<Completion> {
         }
         if !before.starts_with('.') || before.is_empty() {
             for mnemonic in arm_isa::mnemonics() {
+                let detail = arm_isa::forms(mnemonic).next().map(Form::signature);
                 out.push(completion(
                     mnemonic.to_string(),
                     CompletionKind::Instruction,
-                    None,
+                    detail.as_deref(),
                 ));
             }
             for symbol in analysis
@@ -217,6 +220,13 @@ pub fn completions(analysis: &Analysis, offset: usize) -> Vec<Completion> {
         }
         return out;
     }
+    if let Some((mnemonic, operands)) = before.split_once(char::is_whitespace) {
+        let candidates = candidates(analysis, mnemonic, operands);
+        let out = operand_completions(analysis, offset, &candidates, globals);
+        if !out.is_empty() {
+            return out;
+        }
+    }
     for name in common_registers() {
         out.push(completion(name, CompletionKind::Register, None));
     }
@@ -235,6 +245,296 @@ pub fn completions(analysis: &Analysis, offset: usize) -> Vec<Completion> {
         }
     }
     out
+}
+
+/// The forms the operands typed so far could begin, each with the index of
+/// the class the operand at the cursor goes in.
+fn candidates(analysis: &Analysis, mnemonic: &str, operands: &str) -> Vec<(Form, usize)> {
+    if !arm_isa::is_instruction(mnemonic) {
+        return Vec::new();
+    }
+    let Some(typed) = analysis.partial_operands(operands) else {
+        return Vec::new();
+    };
+    arm_isa::match_prefix(&Mnemonic::parse(mnemonic), &typed)
+}
+
+/// The class the operand at the cursor must fit: the one after `[` if the
+/// operand starts with it.
+fn expected_class(form: Form, next: usize) -> Option<OperandClass> {
+    let mut classes = form.operands().skip(next);
+    let class = classes.next()?;
+    if class.kind() == ClassKind::Token && class.name() == "[" {
+        return classes.next();
+    }
+    Some(class)
+}
+
+/// What fits the operand at the cursor, in each candidate form.
+fn operand_completions(
+    analysis: &Analysis,
+    offset: usize,
+    candidates: &[(Form, usize)],
+    globals: &[String],
+) -> Vec<Completion> {
+    let mut classes: Vec<OperandClass> = Vec::new();
+    for &(form, next) in candidates {
+        if let Some(class) = expected_class(form, next)
+            && !classes.contains(&class)
+        {
+            classes.push(class);
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut push = |out: &mut Vec<Completion>, label: String, kind, detail: Option<String>| {
+        if seen.insert(label.clone()) {
+            out.push(Completion {
+                label,
+                kind,
+                detail,
+            });
+        }
+    };
+    let mut registers = false;
+    for class in classes {
+        let expects = expects(class);
+        for name in &expects.registers {
+            push(&mut out, name.clone(), CompletionKind::Register, None);
+        }
+        registers |= !expects.registers.is_empty();
+        for keyword in expects.keywords {
+            push(&mut out, keyword, CompletionKind::Condition, None);
+        }
+        if let Some(suffix) = expects.labels {
+            let locals = analysis
+                .symbols()
+                .iter()
+                .filter(|s| s.kind == SymbolKind::Label)
+                .map(|s| s.name.clone());
+            for name in locals.chain(globals.iter().cloned()) {
+                push(
+                    &mut out,
+                    format!("{name}{suffix}"),
+                    CompletionKind::Label,
+                    None,
+                );
+            }
+        }
+        if expects.constants {
+            for symbol in analysis
+                .symbols()
+                .iter()
+                .filter(|s| s.kind == SymbolKind::Constant)
+            {
+                let detail = analysis
+                    .constant_value(&symbol.name)
+                    .map(|v| format!("= {v}"));
+                push(
+                    &mut out,
+                    symbol.name.clone(),
+                    CompletionKind::Constant,
+                    detail,
+                );
+            }
+        }
+    }
+    if registers {
+        for symbol in analysis.symbols().iter().filter(|s| {
+            s.kind == SymbolKind::RegisterAlias && s.scope_end.is_none_or(|end| offset < end)
+        }) {
+            push(
+                &mut out,
+                symbol.name.clone(),
+                CompletionKind::RegisterAlias,
+                Some("register alias".to_string()),
+            );
+        }
+    }
+    out
+}
+
+/// What an operand class accepts, for completion.
+#[derive(Debug, Default)]
+struct Expects {
+    registers: Vec<String>,
+    /// Condition codes, barrier options, shifts, and other names.
+    keywords: Vec<String>,
+    /// Labels, with what to write after them: `@PAGE`.
+    labels: Option<&'static str>,
+    constants: bool,
+}
+
+fn expects(class: OperandClass) -> Expects {
+    let mut out = Expects::default();
+    let words = |list: &[&str]| list.iter().map(|w| w.to_string()).collect();
+    match class.kind() {
+        ClassKind::Register => out.registers = registers_in(class),
+        ClassKind::Token => {
+            let name = class.name();
+            if name.chars().all(|c| c.is_ascii_alphabetic()) {
+                out.keywords = vec![name.to_string()];
+            }
+        }
+        _ => {}
+    }
+    if class.kind() != ClassKind::Custom {
+        return out;
+    }
+    let predicate = class.predicate();
+    let (family, args) = predicate.split_once('<').unwrap_or((predicate, ""));
+    // `isGPR64<AArch64::FPR128RegClassID>`: a register class by name.
+    let named = args.split([',', '>']).find_map(|a| {
+        a.trim()
+            .strip_prefix("AArch64::")?
+            .strip_suffix("RegClassID")
+    });
+    match family {
+        "isGPR64" | "isGPR64WithShiftExtend" => {
+            if let Some(class) = named.and_then(arm_isa::operand_class) {
+                out.registers = registers_in(class);
+            }
+        }
+        "isGPR32as64" => out.registers = registers_named("GPR32"),
+        "isGPR64as32" => out.registers = registers_named("GPR64"),
+        "isNeonVectorReg" => out.registers = numbered("v", 0..32),
+        "isNeonVectorRegLo" => out.registers = numbered("v", 0..16),
+        "isNeonVectorReg0to7" => out.registers = numbered("v", 0..8),
+        "isSVEDataVectorRegOfWidth" | "isSVEDataVectorRegWithShiftExtend" | "isFPRasZPR" => {
+            out.registers = numbered("z", 0..32);
+        }
+        "isSVEPredicateVectorRegOfWidth" | "isSVEPredicateOrPredicateAsCounterRegOfWidth" => {
+            out.registers = if named == Some("PPR_3b") {
+                numbered("p", 0..8)
+            } else {
+                numbered("p", 0..16)
+            };
+        }
+        "isSVEPredicateAsCounterRegOfWidth" => {
+            out.registers = if named == Some("PNR_p8to15") {
+                numbered("pn", 8..16)
+            } else {
+                numbered("pn", 0..16)
+            };
+        }
+        "isCondCode" => out.keywords = words(arm_isa::CONDITION_CODES),
+        "isBarrier" => out.keywords = words(arm_isa::BARRIER_OPTIONS),
+        "isPrefetch" => out.keywords = arm_isa::prefetch_operations(),
+        "isSVEPattern" => out.keywords = words(arm_isa::SVE_PATTERNS),
+        "isArithmeticShifter" => out.keywords = words(&["lsl", "lsr", "asr"]),
+        "isLogicalShifter" => out.keywords = words(&["lsl", "lsr", "asr", "ror"]),
+        "isMovImm32Shifter"
+        | "isMovImm64Shifter"
+        | "isLogicalVecShifter"
+        | "isLogicalVecHalfWordShifter" => out.keywords = words(&["lsl"]),
+        "isMoveVecShifter" => out.keywords = words(&["msl"]),
+        "isExtend" | "isExtend64" | "isExtendLSL64" => {
+            out.keywords = words(&[
+                "uxtb", "uxth", "uxtw", "uxtx", "sxtb", "sxth", "sxtw", "sxtx", "lsl",
+            ]);
+        }
+        "isMemWExtend" => out.keywords = words(&["uxtw", "sxtw"]),
+        "isMemXExtend" => out.keywords = words(&["lsl", "sxtx"]),
+        "isBranchTarget" | "isAdrLabel" | "isPAuthPCRelLabel16Operand" => out.labels = Some(""),
+        "isAdrpLabel" => out.labels = Some("@PAGE"),
+        "isUImm12Offset" | "isAddSubImm" => {
+            // `ldr x0, [x0, _msg@PAGEOFF]` and `add x0, x0, _msg@PAGEOFF`.
+            out.labels = Some("@PAGEOFF");
+            out.constants = true;
+        }
+        _ => {
+            out.constants = family.contains("Imm") || family == "isImm";
+        }
+    }
+    out
+}
+
+/// Registers that fit a class, by their usual names: no `x31` or `w31`.
+fn registers_in(class: OperandClass) -> Vec<String> {
+    let mut names: Vec<&str> = Register::all()
+        .filter(|r| r.kind() == RegisterKind::Scalar && r.fits(class))
+        .map(Register::name)
+        .filter(|n| !n.ends_with("31") || n.starts_with(['b', 'h', 's', 'd', 'q']))
+        .collect();
+    // x0, x1, ..., x30, then sp and the like.
+    names.sort_by_key(|n| {
+        let digits = n.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+        match digits.parse::<u32>() {
+            Ok(number) if !digits.is_empty() => (0, n.len() - digits.len(), number, *n),
+            _ => (1, 0, 0, *n),
+        }
+    });
+    names.into_iter().map(String::from).collect()
+}
+
+fn registers_named(class: &str) -> Vec<String> {
+    arm_isa::operand_class(class).map_or_else(Vec::new, registers_in)
+}
+
+fn numbered(prefix: &str, range: Range<u32>) -> Vec<String> {
+    range.map(|n| format!("{prefix}{n}")).collect()
+}
+
+/// The signatures of the instruction at the cursor, for signature help.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureHelp {
+    /// Each signature, with the operand the cursor is in, if it's one of them.
+    pub signatures: Vec<(arm_isa::Signature, Option<usize>)>,
+}
+
+/// Most forms a signature help shows; `mov` alone has dozens.
+const MAX_SIGNATURES: usize = 30;
+
+/// Signature help in an instruction's operands: the forms that the operands
+/// typed so far could begin, with the operand at the cursor. All forms if
+/// none fit, so a mistake doesn't hide what's expected.
+pub fn signature_help(analysis: &Analysis, offset: usize) -> Option<SignatureHelp> {
+    let text = analysis.text();
+    let offset = offset.min(text.len());
+    if in_comment_or_string(analysis, offset) {
+        return None;
+    }
+    let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
+    let before = statement_prefix(&text[line_start..offset]);
+    let (mnemonic, operands) = before.split_once(char::is_whitespace)?;
+    if !arm_isa::is_instruction(mnemonic) {
+        return None;
+    }
+    let mut found: Vec<(arm_isa::Signature, Option<usize>)> =
+        candidates(analysis, mnemonic, operands)
+            .into_iter()
+            .map(|(form, next)| {
+                let parts = form.signature_parts();
+                let active = parts.param_of.get(next).copied().flatten();
+                (parts, active)
+            })
+            .collect();
+    if found.is_empty() {
+        // Count the commas outside `{ }` lists.
+        let mut depth = 0i32;
+        let mut commas = 0;
+        for c in operands.chars() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                ',' if depth <= 0 => commas += 1,
+                _ => {}
+            }
+        }
+        let head = Mnemonic::parse(mnemonic).head;
+        found = arm_isa::forms(&head)
+            .filter(|f| f.syntax() == Syntax::Generic)
+            .map(|form| {
+                let parts = form.signature_parts();
+                let active = (commas < parts.params.len()).then_some(commas);
+                (parts, active)
+            })
+            .collect();
+    }
+    let mut seen = BTreeSet::new();
+    found.retain(|(parts, _)| seen.insert(parts.label()));
+    found.truncate(MAX_SIGNATURES);
+    (!found.is_empty()).then_some(SignatureHelp { signatures: found })
 }
 
 fn completion(label: String, kind: CompletionKind, detail: Option<&str>) -> Completion {
@@ -815,7 +1115,7 @@ mod tests {
     }
 
     fn labels(text: &str, offset: usize) -> Vec<String> {
-        completions(&Analysis::new(text), offset)
+        completions(&Analysis::new(text), offset, &[])
             .into_iter()
             .map(|c| c.label)
             .collect()
@@ -840,12 +1140,190 @@ mod tests {
 
     #[test]
     fn completes_registers_and_symbols_in_operands() {
-        let text = "_target: nop\nlimit = 3\nb ";
+        let text = "_target: nop\nlimit = 3\nmov x0, ";
         let all = labels(text, text.len());
-        assert!(all.contains(&"x0".to_string()));
-        assert!(all.contains(&"_target".to_string()));
+        assert!(all.contains(&"x1".to_string()));
         assert!(all.contains(&"limit".to_string()));
         assert!(!all.contains(&"add".to_string()));
+        // A branch takes a label, not a register.
+        let text = "_target: nop\nb ";
+        let all = labels(text, text.len());
+        assert!(all.contains(&"_target".to_string()));
+        assert!(!all.contains(&"x0".to_string()));
+    }
+
+    fn operand_labels(text: &str, globals: &[&str]) -> Vec<String> {
+        let globals: Vec<String> = globals.iter().map(|g| g.to_string()).collect();
+        completions(&Analysis::new(text), text.len(), &globals)
+            .into_iter()
+            .map(|c| c.label)
+            .collect()
+    }
+
+    fn has(all: &[String], wanted: &[&str]) -> bool {
+        wanted.iter().all(|w| all.iter().any(|a| a == w))
+    }
+
+    fn lacks(all: &[String], unwanted: &[&str]) -> bool {
+        unwanted.iter().all(|w| !all.iter().any(|a| a == w))
+    }
+
+    #[test]
+    fn operand_completion_follows_the_forms() {
+        // A W destination means W sources.
+        let w = operand_labels("  add w0, ", &[]);
+        assert!(has(&w, &["w1", "wsp"]) && lacks(&w, &["x1", "v0"]), "{w:?}");
+        // Registers come in numeric order.
+        let x = operand_labels("  ret ", &[]);
+        let at = |n: &str| x.iter().position(|l| l == n);
+        assert!(at("x2") < at("x10"), "{x:?}");
+        assert!(lacks(&x, &["x31"]));
+        // The base of an address can be sp, and is never a W register.
+        let base = operand_labels("  ldr x0, [", &[]);
+        assert!(
+            has(&base, &["x1", "sp"]) && lacks(&base, &["w1", "_x@PAGEOFF"]),
+            "{base:?}"
+        );
+        // After the base: an offset, a page offset, or an index register.
+        let text = "size = 8\n_msg: nop\n  ldr x0, [x1, ";
+        let offset = operand_labels(text, &[]);
+        assert!(has(&offset, &["size", "_msg@PAGEOFF", "x2"]), "{offset:?}");
+        let conds = operand_labels("  csel x0, x1, x2, ", &[]);
+        assert!(
+            has(&conds, &["eq", "ne", "hs"]) && lacks(&conds, &["x0"]),
+            "{conds:?}"
+        );
+        let shifts = operand_labels("  add x0, x1, x2, ", &[]);
+        assert!(
+            has(&shifts, &["lsl", "asr"]) && lacks(&shifts, &["ror"]),
+            "{shifts:?}"
+        );
+        let extends = operand_labels("  ldr x0, [x1, w2, ", &[]);
+        assert!(
+            has(&extends, &["uxtw", "sxtw"]) && lacks(&extends, &["lsl"]),
+            "{extends:?}"
+        );
+    }
+
+    #[test]
+    fn operand_completion_for_names_and_vectors() {
+        let barriers = operand_labels("  dmb ", &[]);
+        assert!(
+            has(&barriers, &["ish", "sy"]) && lacks(&barriers, &["x0"]),
+            "{barriers:?}"
+        );
+        let prefetch = operand_labels("  prfm ", &[]);
+        assert!(has(&prefetch, &["pldl1keep", "pstl2strm"]), "{prefetch:?}");
+        let vectors = operand_labels("  fadd v0.4s, ", &[]);
+        assert!(
+            has(&vectors, &["v1", "v31"]) && lacks(&vectors, &["x0"]),
+            "{vectors:?}"
+        );
+        let scalars = operand_labels("  fadd d0, ", &[]);
+        assert!(
+            has(&scalars, &["d1", "d31"]) && lacks(&scalars, &["v1"]),
+            "{scalars:?}"
+        );
+        let sve = operand_labels("  ptrue p0.s, ", &[]);
+        assert!(has(&sve, &["all", "vl4"]), "{sve:?}");
+        let preds = operand_labels("  add z0.s, ", &[]);
+        assert!(has(&preds, &["z1", "p0"]), "{preds:?}");
+    }
+
+    #[test]
+    fn operand_completion_for_labels() {
+        let text = "_local: nop\nlimit = 3\n  bl ";
+        let calls = operand_labels(text, &["_helper"]);
+        assert!(has(&calls, &["_local", "_helper"]), "{calls:?}");
+        assert!(lacks(&calls, &["x0", "limit"]), "{calls:?}");
+        let page = operand_labels("_msg: nop\n  adrp x0, ", &[]);
+        assert!(has(&page, &["_msg@PAGE"]), "{page:?}");
+        let imm = operand_labels("limit = 3\n  mov x0, ", &[]);
+        assert!(has(&imm, &["limit", "x1"]), "{imm:?}");
+        let detail = completions(&Analysis::new("limit = 3\n  cmp x0, "), 21, &[])
+            .into_iter()
+            .find(|c| c.label == "limit")
+            .and_then(|c| c.detail);
+        assert_eq!(detail.as_deref(), Some("= 3"));
+        // Aliases go where registers do.
+        let alias = operand_labels("tmp .req x9\n  add x0, ", &[]);
+        assert!(has(&alias, &["tmp", "x1"]), "{alias:?}");
+    }
+
+    #[test]
+    fn operand_completion_falls_back() {
+        // Nothing fits: every register and symbol, as before.
+        let bad = operand_labels("_f: nop\n  add x0, v1.4b, ", &[]);
+        assert!(has(&bad, &["x0", "v0", "_f"]), "{bad:?}");
+        // Macros aren't instructions.
+        let text = ".macro m a\n.endm\n  m ";
+        assert!(has(&operand_labels(text, &[]), &["x0"]));
+    }
+
+    #[test]
+    fn mnemonics_show_a_signature() {
+        let all = completions(&Analysis::new("  "), 2, &[]);
+        let ldp = all
+            .iter()
+            .find(|c| c.label == "ldp")
+            .and_then(|c| c.detail.clone());
+        assert!(ldp.is_some_and(|d| d.starts_with("ldp ")));
+    }
+
+    fn signature(text: &str) -> Option<(Vec<String>, Vec<Option<usize>>)> {
+        let help = signature_help(&Analysis::new(text), text.len())?;
+        Some(
+            help.signatures
+                .into_iter()
+                .map(|(parts, active)| (parts.label(), active))
+                .unzip(),
+        )
+    }
+
+    #[test]
+    fn signature_help_tracks_the_operand() {
+        let (labels, active) = signature("  ldp x0, x1, [").expect("help");
+        let pre = labels
+            .iter()
+            .position(|l| l == "ldp Xn, Xn, [Xn|SP, #-512..504 (×8)]!")
+            .expect("pre-index form");
+        assert_eq!(active[pre], Some(2));
+        let (labels, active) = signature("  ldp x0, x1, [sp, ").expect("help");
+        let at = labels
+            .iter()
+            .position(|l| l.ends_with("]!"))
+            .expect("pre-index form");
+        assert_eq!(active[at], Some(3));
+        // W operands narrow add to its W forms.
+        let (labels, active) = signature("  add w0, ").expect("help");
+        assert!(labels.iter().all(|l| !l.contains("Xn")), "{labels:?}");
+        assert!(active.iter().all(|a| *a == Some(1)));
+        let (labels, active) = signature("  b.eq ").expect("help");
+        assert_eq!(
+            (labels, active),
+            (vec!["b.<cond> <label>".to_string()], vec![Some(0)])
+        );
+        // `ret` alone has no operand at the cursor.
+        let (labels, active) = signature("  ret x1").expect("help");
+        assert_eq!(labels, ["ret", "ret Xn"]);
+        assert_eq!(active, [None, Some(0)]);
+    }
+
+    #[test]
+    fn signature_help_falls_back_to_every_form() {
+        // Nothing fits: all of add's forms, by comma count.
+        let (labels, active) = signature("  add x0, v1.4b, ").expect("help");
+        assert!(
+            labels.len() > 3 && labels.len() <= MAX_SIGNATURES,
+            "{}",
+            labels.len()
+        );
+        assert!(active.iter().all(|a| a.is_none_or(|a| a == 2)));
+        // SYS aliases are C++ in clang, so there are no forms to show.
+        assert!(signature("  dc ").is_none());
+        assert!(signature("  ldr x0, [x1] ; a comment ").is_none());
+        assert!(signature("  .quad ").is_none());
+        assert!(signature("  ldr").is_none());
     }
 
     #[test]

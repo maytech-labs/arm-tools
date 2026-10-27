@@ -4,42 +4,82 @@
 
 use crate::{ClassKind, Form, OperandClass, Register, RegisterKind};
 
+/// A form's signature in pieces, for signature help.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature {
+    /// The mnemonic, with anything written attached to it: `b.<cond>`, `fadd.4s`.
+    pub head: String,
+    /// The comma-separated operands, as written: `[Xn|SP`, `#0..32760 (×8)]`.
+    pub params: Vec<String>,
+    /// For each of the form's operand classes, the param it's written in, or
+    /// None for classes in the head.
+    pub param_of: Vec<Option<usize>>,
+}
+
+impl Signature {
+    /// The whole signature on one line.
+    pub fn label(&self) -> String {
+        if self.params.is_empty() {
+            self.head.clone()
+        } else {
+            format!("{} {}", self.head, self.params.join(", "))
+        }
+    }
+}
+
 impl Form {
     /// The form as you'd write it, with placeholders for operands:
     /// `ldp Xt, Xt, [Xn|SP, #-512..504 (×8)]!`.
     pub fn signature(self) -> String {
+        self.signature_parts().label()
+    }
+
+    /// The signature split into the mnemonic and its operands. A `[` starts
+    /// an operand; `]`, `!`, and `.4s` attach to the one before.
+    pub fn signature_parts(self) -> Signature {
         let operands: Vec<OperandClass> = self.operands().collect();
-        let mut out = self.mnemonic().to_string();
+        let mut head = self.mnemonic().to_string();
+        let mut params: Vec<String> = Vec::new();
+        let mut param_of = Vec::with_capacity(operands.len());
         let mut rest = operands.as_slice();
         // `b.eq` is `b`, `.`, a condition code, then the label.
         if let [dot, cond, tail @ ..] = rest
             && dot.kind() == ClassKind::Token
             && dot.name() == "."
         {
-            out.push('.');
-            out.push_str(&placeholder(*cond));
+            head.push('.');
+            head.push_str(&placeholder(*cond));
+            param_of.extend([None, None]);
             rest = tail;
         }
-        let mut first = true;
         let mut after_open = false;
         for class in rest {
             let name = class.name();
             let attached = class.kind() == ClassKind::Token
                 && (matches!(name, "]" | "!") || name.starts_with('.'));
-            if attached {
-                out.push_str(name);
-            } else {
-                if first {
-                    out.push(' ');
-                } else if !after_open {
-                    out.push_str(", ");
+            match params.last_mut() {
+                Some(last) if attached || after_open => {
+                    if attached {
+                        last.push_str(name);
+                    } else {
+                        last.push_str(&placeholder(*class));
+                    }
                 }
-                out.push_str(&placeholder(*class));
-                first = false;
+                None if attached => {
+                    head.push_str(name);
+                    param_of.push(None);
+                    continue;
+                }
+                _ => params.push(placeholder(*class)),
             }
+            param_of.push(Some(params.len() - 1));
             after_open = class.kind() == ClassKind::Token && name == "[";
         }
-        out
+        Signature {
+            head,
+            params,
+            param_of,
+        }
     }
 }
 
@@ -360,6 +400,45 @@ mod tests {
         has("ldr", "LDRXui", "ldr Xn, [Xn|SP]");
         has("b", "Bcc", "b.<cond> <label>");
         has("ret", "RET", "ret Xn");
+    }
+
+    #[test]
+    fn signature_parts_split_at_commas() {
+        let parts = |mnemonic, opcode| {
+            forms(mnemonic)
+                .find(|f| f.opcode() == opcode)
+                .expect("form")
+                .signature_parts()
+        };
+        let ldp = parts("ldp", "LDPXpre");
+        assert_eq!(ldp.head, "ldp");
+        assert_eq!(
+            ldp.params,
+            ["Xn", "Xn", "[Xn|SP", "#-512..504 (×8)]!"],
+            "a [ starts an operand, ] and ! attach"
+        );
+        // Xn, Xn, [, Xn|SP, imm, ], !
+        assert_eq!(
+            ldp.param_of,
+            [0, 1, 2, 2, 3, 3, 3].map(Some),
+            "every class maps to its operand"
+        );
+        let b = parts("b", "Bcc");
+        assert_eq!((b.head.as_str(), b.params.len()), ("b.<cond>", 1));
+        assert_eq!(b.param_of, [None, None, Some(0)]);
+        let neon = forms("fadd")
+            .find(|f| {
+                f.operands()
+                    .next()
+                    .is_some_and(|c| c.name().starts_with('.'))
+            })
+            .expect("apple form")
+            .signature_parts();
+        assert!(neon.head.starts_with("fadd."), "{neon:?}");
+        assert_eq!(neon.param_of[0], None);
+        assert!(forms("ret").any(|f| f.signature_parts().label() == "ret Xn"));
+        let nop = forms("nop").next().expect("nop").signature_parts();
+        assert_eq!(nop.label(), nop.head);
     }
 
     fn scalar(name: &str) -> Register {

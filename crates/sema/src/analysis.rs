@@ -230,6 +230,58 @@ impl Analysis {
         }
     }
 
+    /// The operands of an instruction being typed, for the matcher:
+    /// `before` is the operand text up to the cursor. The operand under the
+    /// cursor is left out, except a `[` it starts with. Names resolve as at
+    /// the end of the file. None inside a `{` list, or if an operand can't be
+    /// judged.
+    pub fn partial_operands(&self, before: &str) -> Option<Vec<arm_isa::Operand>> {
+        let mut depth = 0i32;
+        let mut split = None;
+        for (i, c) in before.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                ',' if depth == 0 => split = Some(i),
+                _ => {}
+            }
+        }
+        if depth > 0 {
+            return None;
+        }
+        let (done, current) = match split {
+            Some(i) => (&before[..i], &before[i + 1..]),
+            None => ("", before),
+        };
+        let mut out = Vec::new();
+        if !done.trim().is_empty() {
+            let open = done
+                .matches('[')
+                .count()
+                .saturating_sub(done.matches(']').count());
+            let line = format!("nop {done}{}", "]".repeat(open));
+            let parse = arm_syntax::parse(&line);
+            let insn = parse.tree().statements().find_map(|s| match s {
+                Statement::Instruction(i) => Some(i),
+                _ => None,
+            })?;
+            let scope = Scope {
+                constants: &self.constants,
+                aliases: &self.aliases,
+            };
+            out = operands::flatten(&insn, &scope)?.operands;
+            for _ in 0..open {
+                if matches!(out.last(), Some(arm_isa::Operand::Token(t)) if t == "]") {
+                    out.pop();
+                }
+            }
+        }
+        if current.trim_start().starts_with('[') {
+            out.push(arm_isa::Operand::Token("[".into()));
+        }
+        Some(out)
+    }
+
     /// The value of a constant defined exactly once in this file (or once in
     /// what it includes), if it's known. Redefined constants (`.set` twice)
     /// have no single value.

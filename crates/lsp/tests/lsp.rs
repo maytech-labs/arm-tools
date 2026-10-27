@@ -249,6 +249,7 @@ fn advertises_capabilities_and_negotiates_encoding() {
         "foldingRangeProvider",
         "inlayHintProvider",
         "workspaceSymbolProvider",
+        "signatureHelpProvider",
     ] {
         assert!(!caps[capability].is_null(), "missing {capability}");
     }
@@ -589,6 +590,20 @@ fn navigation_between_linked_files() {
     );
     assert!(uris.contains(&main_uri.as_str()));
 
+    // Completing a call offers labels from other files.
+    let after_bl = json!({ "textDocument": { "uri": main_uri }, "position": start(2, 7) });
+    let items = client.request("textDocument/completion", after_bl)["result"].clone();
+    let labels: Vec<&str> = items
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|i| i["label"].as_str())
+        .collect();
+    assert!(
+        labels.contains(&"_helper") && labels.contains(&"_main"),
+        "{labels:?}"
+    );
+
     // Workspace symbol search.
     let symbols = client.request("workspace/symbol", json!({ "query": "help" }))["result"].clone();
     assert_eq!(symbols[0]["name"], "_helper");
@@ -637,7 +652,7 @@ fn hover() {
 #[test]
 fn completion() {
     let mut client = Client::start(true);
-    client.open("_start: nop\n    \n    b \n");
+    client.open("_start: nop\n    \n    b \n    csel x0, x1, x2, \n");
     let items = client.at("textDocument/completion", 1, 4, json!({}));
     let labels: Vec<&str> = items
         .as_array()
@@ -658,9 +673,61 @@ fn completion() {
         .flatten()
         .filter_map(|i| i["label"].as_str())
         .collect();
-    assert!(labels.contains(&"_start") && labels.contains(&"x0"));
-    assert!(!labels.contains(&"ldr"));
+    assert!(labels.contains(&"_start"), "{labels:?}");
+    assert!(!labels.contains(&"ldr") && !labels.contains(&"x0"));
+
+    // Only what fits: condition codes after csel's registers, in order.
+    let items = client.at("textDocument/completion", 3, 21, json!({}));
+    let items = items.as_array().cloned().unwrap_or_default();
+    let labels: Vec<&str> = items.iter().filter_map(|i| i["label"].as_str()).collect();
+    assert_eq!(labels.first(), Some(&"eq"), "{labels:?}");
+    assert!(!labels.contains(&"x0"));
+    assert_eq!(items[0]["sortText"], "00000");
     assert!(client.shutdown().success());
+}
+
+#[test]
+fn signature_help() {
+    let text = "    ldp x0, x1, [sp, \n    ldp x0, x1, [sp, #-16]!\n    .quad 1\n";
+    for utf8 in [true, false] {
+        let mut client = Client::start(utf8);
+        client.open(text);
+        let help = client.at("textDocument/signatureHelp", 0, 21, json!({}));
+        let signatures = help["signatures"].as_array().cloned().unwrap_or_default();
+        let pre = signatures
+            .iter()
+            .find(|s| s["label"] == "ldp Xn, Xn, [Xn|SP, #-512..504 (×8)]!")
+            .expect("pre-index form");
+        assert_eq!(pre["activeParameter"], 3);
+        // Offsets into the label: UTF-8 bytes or UTF-16 units, as negotiated.
+        let label = pre["label"].as_str().unwrap_or_default();
+        let offsets = &pre["parameters"][3]["label"];
+        let (from, to) = (
+            offsets[0].as_u64().unwrap_or(0),
+            offsets[1].as_u64().unwrap_or(0),
+        );
+        let param = if utf8 {
+            label.get(from as usize..to as usize).map(str::to_string)
+        } else {
+            let units: Vec<u16> = label.encode_utf16().collect();
+            String::from_utf16(&units[from as usize..to as usize]).ok()
+        };
+        assert_eq!(param.as_deref(), Some("#-512..504 (×8)]!"));
+        assert_eq!(pre["parameters"][2]["label"][0], 12);
+
+        // Hovering the mnemonic isn't in the operands; directives have none.
+        assert!(
+            client
+                .at("textDocument/signatureHelp", 1, 6, json!({}))
+                .is_null()
+        );
+        assert!(
+            client
+                .at("textDocument/signatureHelp", 2, 10, json!({}))
+                .is_null()
+        );
+        assert!(client.shutdown().success());
+    }
 }
 
 #[test]

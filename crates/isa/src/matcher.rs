@@ -78,8 +78,8 @@ pub fn match_for(
     for form in forms(&mnemonic.head) {
         any = true;
         let classes: Vec<OperandClass> = form.operands().collect();
-        match match_from(&classes, &all, 0, 0) {
-            Ok(()) => {
+        match match_from(&classes, &all, 0, 0, false) {
+            Ok(_) => {
                 let missing = features.map(|f| f.missing(form)).unwrap_or_default();
                 if missing.is_empty() {
                     return MatchResult::Matched(form);
@@ -101,6 +101,37 @@ pub fn match_for(
         return MatchResult::Unchecked;
     };
     MatchResult::Mismatch(best.into_mismatch(prefix, operands.len()))
+}
+
+/// The forms of `mnemonic` that the operands typed so far could begin, each
+/// with the index of the class the next operand goes in (the class count if
+/// the form is complete). For editors: signature help and completion.
+/// Empty for instructions clang handles in C++.
+pub fn match_prefix(mnemonic: &Mnemonic, operands: &[Operand]) -> Vec<(Form, usize)> {
+    if mnemonic.special().is_some_and(|s| s != Special::Bitfield) {
+        return Vec::new();
+    }
+    let mut all = Vec::new();
+    if let Some(condition) = &mnemonic.condition {
+        all.push(Operand::Token(".".into()));
+        all.push(Operand::CondCode(condition.clone()));
+    }
+    all.extend(mnemonic.suffixes.iter().map(|s| Operand::Token(s.clone())));
+    all.extend(cpp_rewrites(&mnemonic.head, operands));
+    forms(&mnemonic.head)
+        .filter_map(|form| {
+            let classes: Vec<OperandClass> = form.operands().collect();
+            let next = match_from(&classes, &all, 0, 0, true).ok()?;
+            // A form whose next class is written attached to the operand
+            // before (`]`, `!`, `.4s`) can't follow a comma, and a form with
+            // a suffix on its mnemonic needs it written.
+            let attached = classes.get(next).is_some_and(|c| {
+                c.kind() == ClassKind::Token
+                    && (matches!(c.name(), "]" | "!" | ".") || c.name().starts_with('.'))
+            });
+            (!attached).then_some((form, next))
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -144,13 +175,16 @@ impl Failure {
 }
 
 /// Matches classes from `c` against operands from `o`, trying every reading
-/// of each operand. Returns how far the best attempt got on failure.
+/// of each operand. Returns how far the best attempt got on failure. With
+/// `prefix`, the operands only need to begin the form, and success is the
+/// index of the class after the last operand.
 fn match_from(
     classes: &[OperandClass],
     ops: &[Operand],
     c: usize,
     o: usize,
-) -> Result<(), Failure> {
+    prefix: bool,
+) -> Result<usize, Failure> {
     let fail = |at: Option<usize>, class: Option<OperandClass>, near: bool| Failure {
         // Filled in by the caller.
         form: Form(0),
@@ -159,9 +193,12 @@ fn match_from(
         class,
         near,
     };
+    if prefix && o == ops.len() {
+        return Ok(c);
+    }
     if c == classes.len() {
         return if o == ops.len() {
-            Ok(())
+            Ok(c)
         } else {
             Err(fail(Some(o), None, false))
         };
@@ -171,13 +208,13 @@ fn match_from(
         return Err(fail(None, Some(class), false));
     }
     let mut best = fail(Some(o), Some(class), false);
-    let keep = |result: Result<(), Failure>, best: &mut Failure| match result {
-        Ok(()) => true,
+    let keep = |result: Result<usize, Failure>, best: &mut Failure| match result {
+        Ok(next) => Some(next),
         Err(f) => {
             if (f.matched, f.near) > (best.matched, best.near) {
                 *best = f;
             }
-            false
+            None
         }
     };
 
@@ -186,17 +223,22 @@ fn match_from(
         && class.name() == "#0"
         && classes.get(c + 1).is_some_and(|n| n.name() == ".0")
         && is_zero(&ops[o])
-        && keep(match_from(classes, ops, c + 2, o + 1), &mut best)
+        && let Some(next) = keep(match_from(classes, ops, c + 2, o + 1, prefix), &mut best)
     {
-        return Ok(());
+        return Ok(next);
     }
 
     // A consecutive register pair, `x0, x1`, which clang reads as one operand.
     if let Some(check) = seq_pair(class, &ops[o], ops.get(o + 1)) {
+        // The pair's second register is still being typed.
+        if prefix && o + 1 == ops.len() {
+            return Ok(c);
+        }
         match check {
             Check::Match => {
-                if keep(match_from(classes, ops, c + 1, o + 2), &mut best) {
-                    return Ok(());
+                if let Some(next) = keep(match_from(classes, ops, c + 1, o + 2, prefix), &mut best)
+                {
+                    return Ok(next);
                 }
             }
             _ => {
@@ -212,8 +254,9 @@ fn match_from(
     if let Some(merged) = ops.get(o + 1).and_then(|next| merge(class, &ops[o], next)) {
         let near = match check_class(class, &merged) {
             Check::Match | Check::Unknown => {
-                if keep(match_from(classes, ops, c + 1, o + 2), &mut best) {
-                    return Ok(());
+                if let Some(next) = keep(match_from(classes, ops, c + 1, o + 2, prefix), &mut best)
+                {
+                    return Ok(next);
                 }
                 false
             }
@@ -227,8 +270,8 @@ fn match_from(
 
     match check_class(class, &ops[o]) {
         Check::Match | Check::Unknown => {
-            if keep(match_from(classes, ops, c + 1, o + 1), &mut best) {
-                return Ok(());
+            if let Some(next) = keep(match_from(classes, ops, c + 1, o + 1, prefix), &mut best) {
+                return Ok(next);
             }
         }
         Check::NearMiss => {
@@ -522,6 +565,53 @@ mod tests {
             MatchResult::Mismatch(m) => m,
             other => panic!("expected a mismatch, got {other:?}"),
         }
+    }
+
+    fn prefix(mnemonic: &str, operands: &[Operand]) -> Vec<(&'static str, usize)> {
+        match_prefix(&Mnemonic::parse(mnemonic), operands)
+            .into_iter()
+            .map(|(f, next)| (f.opcode(), next))
+            .collect()
+    }
+
+    #[test]
+    fn prefixes_narrow_the_forms() {
+        // Nothing typed: every form but those that need a suffix on `add`.
+        let all = prefix("add", &[]);
+        assert!(
+            all.len() > 50 && all.len() < forms("add").count(),
+            "{}",
+            all.len()
+        );
+        let w = prefix("add", &[reg("w0")]);
+        assert!(w.iter().any(|(op, next)| *op == "ADDWrs" && *next == 1));
+        assert!(w.iter().all(|(op, _)| !op.starts_with("ADDX")), "{w:?}");
+        // Memory: after `[ x1` and a comma, the offset goes next, and forms
+        // that close the bracket there are out.
+        let ldr = prefix("ldr", &[reg("x0"), tok("["), reg("x1")]);
+        assert!(ldr.iter().any(|(op, next)| *op == "LDRXui" && *next == 3));
+        assert!(ldr.iter().all(|(op, _)| *op != "LDRXpost"), "{ldr:?}");
+        let post = prefix("ldr", &[reg("x0"), tok("["), reg("x1"), tok("]")]);
+        assert!(post.iter().any(|(op, _)| *op == "LDRXpost"));
+        // A complete instruction points past its last class.
+        let ret = prefix("ret", &[reg("x1")]);
+        assert!(
+            !ret.is_empty() && ret.iter().all(|r| *r == ("RET", 1)),
+            "{ret:?}"
+        );
+        assert!(prefix("ret", &[reg("x1"), reg("x2")]).is_empty());
+        // The condition and the suffix come from the mnemonic.
+        let b = prefix("b.eq", &[]);
+        assert!(!b.is_empty() && b.iter().all(|r| *r == ("Bcc", 2)), "{b:?}");
+        assert!(
+            prefix("fadd.4s", &[])
+                .iter()
+                .all(|(op, _)| op.starts_with("FADD"))
+        );
+        // SYS aliases are C++ in clang.
+        assert!(prefix("dc", &[]).is_empty());
+        // The second register of a pair is still being typed.
+        assert!(!prefix("casp", &[reg("x0")]).is_empty());
     }
 
     #[test]

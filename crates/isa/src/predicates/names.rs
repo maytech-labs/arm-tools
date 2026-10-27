@@ -7,15 +7,14 @@ fn listed(names: &[&str], name: &str) -> bool {
     names.iter().any(|n| n.eq_ignore_ascii_case(name))
 }
 
+/// `DB`: barrier options for `dmb`, `dsb`, and `isb`, most used first.
+pub const BARRIER_OPTIONS: &[&str] = &[
+    "sy", "ish", "ishld", "ishst", "osh", "oshld", "oshst", "nsh", "nshld", "nshst", "ld", "st",
+];
+
 /// `DB`: barrier options for `dmb`, `dsb`, and `isb`.
 pub(super) fn is_barrier(name: &str) -> bool {
-    listed(
-        &[
-            "oshld", "oshst", "osh", "nshld", "nshst", "nsh", "ishld", "ishst", "ish", "ld", "st",
-            "sy",
-        ],
-        name,
-    )
+    listed(BARRIER_OPTIONS, name)
 }
 
 /// `TSB`: the only trace barrier option.
@@ -26,6 +25,19 @@ pub(super) fn is_tsb(name: &str) -> bool {
 /// `DBnXS`: barrier options for `dsb ... nXS`.
 pub(super) fn is_barrier_nxs(name: &str) -> bool {
     listed(&["oshnxs", "nshnxs", "ishnxs", "synxs"], name)
+}
+
+/// `PRFM` prefetch operations: type, target, and policy, like `pldl1keep`.
+pub fn prefetch_operations() -> Vec<String> {
+    let mut out = Vec::new();
+    for ty in ["pld", "pli", "pst"] {
+        for target in ["l1", "l2", "l3", "slc"] {
+            for policy in ["keep", "strm"] {
+                out.push(format!("{ty}{target}{policy}"));
+            }
+        }
+    }
+    out
 }
 
 /// `PRFM`, `SVEPRFM`, and `RPRFM`: prefetch operations. `isPrefetch` serves
@@ -45,15 +57,15 @@ pub(super) fn is_prefetch(name: &str) -> bool {
     prfm || listed(&["pldkeep", "pstkeep", "pldstrm", "pststrm"], name)
 }
 
+/// `SVEPREDPAT`: SVE predicate patterns, most used first.
+pub const SVE_PATTERNS: &[&str] = &[
+    "all", "pow2", "vl1", "vl2", "vl3", "vl4", "vl5", "vl6", "vl7", "vl8", "vl16", "vl32", "vl64",
+    "vl128", "vl256", "mul4", "mul3",
+];
+
 /// `SVEPREDPAT`: SVE predicate patterns.
 pub(super) fn is_sve_pattern(name: &str) -> bool {
-    listed(
-        &[
-            "pow2", "vl1", "vl2", "vl3", "vl4", "vl5", "vl6", "vl7", "vl8", "vl16", "vl32", "vl64",
-            "vl128", "vl256", "mul4", "mul3", "all",
-        ],
-        name,
-    )
+    listed(SVE_PATTERNS, name)
 }
 
 /// `SVEVECLENSPECIFIER`.

@@ -142,6 +142,18 @@ impl Index {
         out
     }
 
+    /// Every global label's name, sorted, once each: for completion.
+    pub fn global_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .files
+            .values()
+            .flat_map(|f| f.definitions.iter().map(|(name, _)| name.clone()))
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.files.len()
@@ -202,8 +214,9 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 mod tests {
     use super::*;
 
-    fn project() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("armls-index-{}", std::process::id()));
+    /// A project in its own directory: tests run in parallel.
+    fn project(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("armls-index-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src/lib")).expect("dirs");
         std::fs::create_dir_all(root.join("build")).expect("dirs");
@@ -226,7 +239,7 @@ mod tests {
 
     #[test]
     fn indexes_global_labels_across_files() {
-        let root = project();
+        let root = project("globals");
         let index = Index::scan(std::slice::from_ref(&root));
         assert_eq!(index.len(), 2, "build and hidden directories are skipped");
         let helper = index.definitions("_helper", None);
@@ -243,7 +256,7 @@ mod tests {
 
     #[test]
     fn references_and_search() {
-        let root = project();
+        let root = project("search");
         let index = Index::scan(std::slice::from_ref(&root));
         // The call in main.s, and the .globl that names it in util.s.
         let uses = index.references("_helper", None);
@@ -252,12 +265,13 @@ mod tests {
         assert!(uses.iter().any(|u| u.path.ends_with("src/lib/util.s")));
         let found: Vec<String> = index.search("HELP").into_iter().map(|(n, _)| n).collect();
         assert_eq!(found, ["_helper"]);
+        assert_eq!(index.global_names(), ["_helper", "_main", "_shared"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn updates_follow_edits() {
-        let root = project();
+        let root = project("updates");
         let mut index = Index::scan(std::slice::from_ref(&root));
         let util = root.join("src/lib/util.s");
         index.update(&util, ".globl _renamed\n_renamed:\n    ret\n");

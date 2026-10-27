@@ -17,13 +17,13 @@ mod operand;
 mod predicates;
 mod tables;
 
-pub use docs::{directive_description, syscall_name};
+pub use docs::{Signature, directive_description, syscall_name};
 pub use features::FeatureSet;
 use generated::*;
-pub use matcher::{MatchResult, Mismatch, match_for, match_instruction};
+pub use matcher::{MatchResult, Mismatch, match_for, match_instruction, match_prefix};
 pub use mnemonic::{CONDITION_CODES, Mnemonic, Special};
 pub use operand::{Check, Imm, Operand, RegisterOperand};
-pub use predicates::check;
+pub use predicates::{BARRIER_OPTIONS, SVE_PATTERNS, check, prefetch_operations};
 pub use tables::{ClassKind, RegisterKind};
 
 /// The LLVM release the tables come from.
@@ -199,6 +199,11 @@ impl OperandClass {
 pub struct Register(usize);
 
 impl Register {
+    /// Every register name clang accepts, sorted by name.
+    pub fn all() -> impl Iterator<Item = Register> {
+        (0..REGISTERS.len()).map(Register)
+    }
+
     /// Every reading of a name, ignoring case. Most names have one; a few, like
     /// `za0.d`, are both a [`RegisterKind::Matrix`] and a tile list entry.
     pub fn lookup(name: &str) -> impl Iterator<Item = Register> + use<> {
