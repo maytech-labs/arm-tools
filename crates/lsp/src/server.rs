@@ -82,7 +82,20 @@ pub fn run(connection: &Connection) -> Result<bool> {
                 if notification.method == "exit" {
                     return Ok(false);
                 }
-                server.notification(notification)?;
+                // A bad notification or a bug is logged, not fatal: the
+                // editor session outlives it (AGENTS.md rule 4).
+                let method = notification.method.clone();
+                let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    server.notification(notification)
+                }));
+                match handled {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => server.log(&format!("armls: {method}: {error}"))?,
+                    Err(panic) => server.log(&format!(
+                        "armls hit a bug handling {method}: {}. Please report it.",
+                        panic_message(panic.as_ref())
+                    ))?,
+                }
             }
             Message::Response(_) => {}
         }
@@ -241,6 +254,8 @@ impl Server<'_> {
                 }
                 self.publish(params.text_document.uri, Vec::new())?;
             }
+            #[cfg(test)]
+            "armls/testPanic" => panic!("a test panic"),
             "textDocument/didSave" => {
                 let params: lsp_types::DidSaveTextDocumentParams =
                     serde_json::from_value(notification.params)?;
@@ -372,19 +387,42 @@ impl Server<'_> {
         Ok(())
     }
 
+    /// Writes to the editor's log for armls.
+    fn log(&self, message: &str) -> Result<()> {
+        let params = lsp_types::LogMessageParams {
+            typ: lsp_types::MessageType::ERROR,
+            message: message.to_string(),
+        };
+        let notification = Notification::new("window/logMessage".into(), params);
+        self.connection.sender.send(notification.into())?;
+        Ok(())
+    }
+
     fn request(&mut self, request: Request) -> Result<()> {
         let id = request.id.clone();
-        let response = match self.dispatch(request) {
-            Ok(response) => response,
-            Err(Failure::InvalidParams(message)) => {
+        let method = request.method.clone();
+        // A bug answers with an error instead of ending the session.
+        let dispatched =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.dispatch(request)));
+        let response = match dispatched {
+            Err(panic) => Response::new_err(
+                id,
+                ErrorCode::InternalError as i32,
+                format!(
+                    "armls hit a bug handling {method}: {}. Please report it, with the file if you can.",
+                    panic_message(panic.as_ref())
+                ),
+            ),
+            Ok(Ok(response)) => response,
+            Ok(Err(Failure::InvalidParams(message))) => {
                 Response::new_err(id, ErrorCode::InvalidParams as i32, message)
             }
-            Err(Failure::MethodNotFound(method)) => Response::new_err(
+            Ok(Err(Failure::MethodNotFound(method))) => Response::new_err(
                 id,
                 ErrorCode::MethodNotFound as i32,
                 format!("armls doesn't support {method}"),
             ),
-            Err(Failure::Refused(message)) => {
+            Ok(Err(Failure::Refused(message))) => {
                 Response::new_err(id, ErrorCode::RequestFailed as i32, message)
             }
         };
@@ -802,6 +840,8 @@ impl Server<'_> {
                     .collect();
                 Ok(ok(id, Some(symbols)))
             }
+            #[cfg(test)]
+            "armls/testPanic" => panic!("a test panic"),
             method => Err(Failure::MethodNotFound(method.to_string())),
         }
     }
@@ -1148,6 +1188,15 @@ enum Failure {
 fn params<P: serde::de::DeserializeOwned>(request: Request) -> std::result::Result<P, Failure> {
     serde_json::from_value(request.params)
         .map_err(|e| Failure::InvalidParams(format!("{}: {e}", request.method)))
+}
+
+/// The text of a panic, as `panic!` and `expect` give it.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
 }
 
 fn ok<R: serde::Serialize>(id: RequestId, result: R) -> Response {

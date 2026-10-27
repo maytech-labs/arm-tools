@@ -54,3 +54,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `armls` call hierarchy: incoming and outgoing calls, `bl` and tail calls, across the project's files.
 - `armls` indexes C and Objective-C function definitions: go to definition, hover, completion, and call hierarchy reach from `bl _foo` into `foo` in a `.c` or `.m` file.
 - A fuzzed edit session for armls: random edits, every request after each, no panics allowed; formatting must change only whitespace and be stable.
+- armls answers a bug in a request with an error, and logs a bad or failing notification, instead of exiting.

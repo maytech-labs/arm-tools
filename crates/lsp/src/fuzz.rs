@@ -146,6 +146,8 @@ struct Session {
     client: Connection,
     server: Option<std::thread::JoinHandle<bool>>,
     next_id: i32,
+    /// Notifications from the server, in order.
+    notifications: Vec<Notification>,
 }
 
 impl Session {
@@ -158,6 +160,7 @@ impl Session {
             client,
             server: Some(server),
             next_id: 0,
+            notifications: Vec::new(),
         };
         let encodings = if utf8 {
             json!(["utf-8"])
@@ -183,8 +186,8 @@ impl Session {
             .expect("server is listening");
     }
 
-    /// Sends a request and waits for its response, skipping notifications.
-    fn request(&mut self, method: &str, params: Value) -> Value {
+    /// Sends a request and waits for its response, keeping notifications.
+    fn response(&mut self, method: &str, params: Value) -> lsp_server::Response {
         self.next_id += 1;
         let id = RequestId::from(self.next_id);
         let request = Request::new(id.clone(), method.into(), params.clone());
@@ -198,22 +201,29 @@ impl Session {
                 .receiver
                 .recv_timeout(Duration::from_secs(20))
                 .unwrap_or_else(|e| panic!("no answer to {method} {params}: {e}"));
-            if let Message::Response(response) = message
-                && response.id == id
-            {
-                return match response.response_result {
-                    Ok(value) => value,
-                    // Refusals (renaming a register) are answers; malformed
-                    // params or unknown methods mean this test is wrong.
-                    Err(e) => {
-                        assert!(
-                            e.code != -32602 && e.code != -32601,
-                            "{method} {params}: {}",
-                            e.message
-                        );
-                        Value::Null
-                    }
-                };
+            match message {
+                Message::Response(response) if response.id == id => return response,
+                Message::Notification(notification) => self.notifications.push(notification),
+                _ => {}
+            }
+        }
+    }
+
+    /// Sends a request and returns its result.
+    fn request(&mut self, method: &str, params: Value) -> Value {
+        let response = self.response(method, params.clone());
+        self.notifications.clear();
+        match response.response_result {
+            Ok(value) => value,
+            // Refusals (renaming a register) are answers; malformed params
+            // or unknown methods mean this test is wrong.
+            Err(e) => {
+                assert!(
+                    e.code != -32602 && e.code != -32601,
+                    "{method} {params}: {}",
+                    e.message
+                );
+                Value::Null
             }
         }
     }
@@ -399,4 +409,49 @@ fn soak() {
         format_session(seed, 100);
         session(seed % 2 == 0, seed, 30);
     }
+}
+
+#[test]
+fn bugs_are_answered_not_fatal() {
+    let mut session = Session::start(true);
+    // A panic in a request is an error response.
+    let response = session.response("armls/testPanic", json!({}));
+    let error = response.response_result.expect_err("an error");
+    assert_eq!(error.code, -32603);
+    assert!(error.message.contains("a test panic"), "{}", error.message);
+    // A panic in a notification, and a malformed one, are logged.
+    session.notify("armls/testPanic", json!({}));
+    session.notify("textDocument/didOpen", json!({ "textDocument": 5 }));
+    let uri = "file:///armls-fuzz/ok.s";
+    session.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "asm", "version": 1, "text": "_f: ret\n" } }),
+    );
+    let hover = session.response(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 0, "character": 5 } }),
+    );
+    let logged: Vec<String> = session
+        .notifications
+        .iter()
+        .filter(|n| n.method == "window/logMessage")
+        .map(|n| n.params["message"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(logged.len(), 2, "{logged:?}");
+    assert!(
+        logged[0].contains("bug handling armls/testPanic"),
+        "{logged:?}"
+    );
+    assert!(
+        logged[1].starts_with("armls: textDocument/didOpen"),
+        "{logged:?}"
+    );
+    // The session goes on.
+    let value = hover.response_result.expect("hover");
+    assert!(
+        value["contents"]["value"]
+            .as_str()
+            .is_some_and(|t| t.contains("ret"))
+    );
+    session.finish();
 }
