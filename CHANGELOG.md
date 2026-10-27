@@ -16,5 +16,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Parser: macro calls (for macros defined earlier in the file), unchecked `.macro`/`.rept`/`.irp`/`.irpc` bodies, `.req` register aliases, register writeback (`x2!`), SME index ranges (`za.s[w8, 0:1]`), ELF relocation specifiers, and `@` variants with arguments or after parentheses and quoted names.
 - `cargo xtask survey <path>...`: checks that every line arm-syntax reports is one clang rejects.
 - HelloSilicon samples (MIT) in the parser corpus.
-- Design doc, roadmap, and ADRs 0001 to 0013.
+- `arm-isa`: instruction tables generated from LLVM 21.1.8's assembler matcher: 20,864 forms, 1,659 mnemonics, operand classes with clang's messages, features, and 635 register names with their kinds. Mnemonic splitting as clang does it.
+- `cargo xtask gen-isa` to regenerate the tables from an LLVM checkout.
+- Design doc, roadmap, and ADRs 0001 to 0014.
 - `cargo xtask check` and CI on macOS and Linux.

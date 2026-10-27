@@ -30,8 +30,12 @@ Done when the workspace builds, `cargo xtask check` passes, and the docs and dec
 Done when every instruction clang accepts in the corpus matches exactly one form, and a sample of invalid operands gets a message naming the expected form.
 
 - [x] Decide the source of the tables ([0013](decisions/0013-isa-from-llvm-tablegen.md)): spike measured 97.7% mnemonic coverage before aliases
-- [ ] `cargo xtask gen-isa` and checked-in tables
-- [ ] Register classes, operand forms, immediate encodability (logical immediates, shifted imm12, etc.)
+- [x] `cargo xtask gen-isa` and checked-in tables ([0014](decisions/0014-isa-from-asm-matcher.md))
+- [x] Mnemonic splitting as clang does it (`bne`, `b.eq`, `fadd.4s`), register names with kinds
+- [x] Every corpus mnemonic is known
+- [ ] Operand model: convert parsed operands to clang's (`v0.16b`, `[x0, #8]!`, lists, shifts)
+- [ ] Predicates: the 83 families (`isImmInRange`, `isSImmScaled`, `isLogicalImm`...), ported from AArch64AsmParser.cpp
+- [ ] Matcher: forms in clang's order, features, and clang's near-miss messages
 - [ ] Hand-written table of C++-parser aliases (`ubfx`, `bfi`, `bne`...) and SYS aliases, each tested against clang
 - [ ] Hover text: our descriptions in `crates/isa/data/descriptions.toml`, common instructions first
 

@@ -1,10 +1,10 @@
 [package]
 name = "arm-isa"
-description = "AArch64 instruction tables: mnemonics, operand forms, and docs."
+description = "AArch64 instruction tables generated from LLVM: mnemonics, operand forms, registers, and features."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT AND Apache-2.0 WITH LLVM-exception"
 authors.workspace = true
 repository.workspace = true
 
@@ -13,3 +13,6 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+arm-syntax.workspace = true

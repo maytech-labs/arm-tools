@@ -9,7 +9,7 @@ arm-tools is a Cargo workspace of tools for AArch64 assembly on macOS: a languag
 | Crate | Package | What it is |
 |---|---|---|
 | `crates/syntax` | `arm-syntax` | Lexer and lossless, error-tolerant parser. Every byte of the input is in the tree. |
-| `crates/isa` | `arm-isa` | AArch64 instruction tables: mnemonics, operand forms, immediate ranges, docs |
+| `crates/isa` | `arm-isa` | AArch64 instruction tables generated from LLVM: mnemonics, operand forms, registers, features. `src/generated.rs` is written by `cargo xtask gen-isa`; never edit it by hand. Licensed MIT and Apache-2.0 WITH LLVM-exception ([0014](docs/decisions/0014-isa-from-asm-matcher.md)). |
 | `crates/sema` | `arm-sema` | The semantic model: symbols, labels, macros, `.include`, sections, conditional assembly |
 | `crates/lint` | `arm-lint` | The lint engine and its rules |
 | `crates/lsp` | `arm-lsp` | The `armls` binary: the language server |
@@ -55,6 +55,8 @@ Two kinds of test, plus an oracle ([0007](docs/decisions/0007-testing.md)).
   git -C /tmp/llvm-project sparse-checkout set llvm/test/MC/AArch64
   cargo xtask survey /tmp/llvm-project/llvm/test/MC/AArch64 crates/syntax/tests/data
   ```
+
+- **Instruction tables:** to regenerate, check out the LLVM tag matching `llvm-tblgen --version` (21.1.8 today) and run `cargo xtask gen-isa --llvm <checkout> --tblgen $(brew --prefix llvm)/bin/llvm-tblgen`. Run `cargo xtask gen-isa` alone for the sparse checkout command. The output must be identical when nothing in LLVM changed.
 
 To see how something parses: `echo 'ldr x0, [x1, #8]!' | cargo run -q -p arm-syntax --example tree`.
 

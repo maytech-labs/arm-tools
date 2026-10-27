@@ -21,3 +21,4 @@
 - [0011 Parser grammar: what's checked at parse time and what waits for sema](decisions/0011-parser-grammar.md) (amended)
 - [0012 Macros, bodies, and ELF syntax, from surveying real assembly against clang](decisions/0012-parser-survey-fixes.md)
 - [0013 Instruction tables from LLVM 21 TableGen, with our own hover text](decisions/0013-isa-from-llvm-tablegen.md)
+- [0014 gen-isa reads clang's assembler matcher, not TableGen's JSON records](decisions/0014-isa-from-asm-matcher.md)

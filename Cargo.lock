@@ -12,6 +12,9 @@ dependencies = [
 [[package]]
 name = "arm-isa"
 version = "0.0.0"
+dependencies = [
+ "arm-syntax",
+]
 
 [[package]]
 name = "arm-lint"
