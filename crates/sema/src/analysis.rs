@@ -115,6 +115,7 @@ pub struct Analysis {
     references: Vec<Reference>,
     diagnostics: Vec<Diagnostic>,
     items: Vec<Item>,
+    inactive: Vec<Range<usize>>,
     /// Constants with known values at the end of the file, for files that
     /// include this one.
     constants: HashMap<String, i64>,
@@ -162,6 +163,8 @@ impl Analysis {
         let parse = arm_syntax::parse(text);
         let mut builder = Builder {
             resolver,
+            inactive: Vec::new(),
+            undecided: Vec::new(),
             stack,
             features,
             symbols: Vec::new(),
@@ -190,6 +193,16 @@ impl Analysis {
         builder.close_blocks();
         let references = builder.resolve();
         let mut diagnostics = std::mem::take(&mut builder.diagnostics);
+        // Nothing is reported from lines clang skips or that we can't decide,
+        // including parse errors: clang doesn't parse skipped lines.
+        let quiet = |d: &Diagnostic| {
+            builder
+                .inactive
+                .iter()
+                .chain(&builder.undecided)
+                .any(|r| r.start <= d.range.start && d.range.start < r.end)
+        };
+        diagnostics.retain(|d| !quiet(d));
         diagnostics.sort_by_key(|d| (d.range.start, d.range.end));
         Analysis {
             text: text.to_string(),
@@ -199,9 +212,16 @@ impl Analysis {
             references,
             diagnostics,
             items: builder.items,
+            inactive: builder.inactive,
             constants: builder.constants,
             aliases: builder.aliases,
         }
+    }
+
+    /// Byte ranges of `.if` branches clang skips because their condition is
+    /// false. Editors grey them out.
+    pub fn inactive(&self) -> &[Range<usize>] {
+        &self.inactive
     }
 
     /// Labels, instructions, sections, data, and macro calls, in order,
@@ -286,6 +306,13 @@ struct Block {
     kind: BlockKind,
     directive: String,
     range: Range<usize>,
+    /// For conditionals: whether the current branch is assembled. None when
+    /// the condition can't be known here.
+    branch: Option<bool>,
+    /// For conditionals: whether an earlier branch was taken.
+    taken: Option<bool>,
+    /// Where the current branch's lines start.
+    branch_start: usize,
 }
 
 /// A name reference waiting for every definition to be known.
@@ -298,6 +325,11 @@ struct Pending {
 
 struct Builder<'r> {
     resolver: Option<&'r dyn Resolver>,
+    /// Lines in branches clang skips.
+    inactive: Vec<Range<usize>>,
+    /// Lines in branches whose condition we can't decide: analyzed, but
+    /// their errors aren't reported.
+    undecided: Vec<Range<usize>>,
     /// CPU features enabled here, changed by `.arch`, `.cpu`, and
     /// `.arch_extension`. None when we can't tell: no checks then.
     features: Option<FeatureSet>,
@@ -331,6 +363,27 @@ impl Builder<'_> {
     }
 
     fn statement(&mut self, statement: &Statement) {
+        // In a branch clang skips, only the conditionals' own nesting counts.
+        if self.active() == Some(false) {
+            if let Statement::Directive(directive) = statement {
+                let name = directive
+                    .name()
+                    .map(|n| n.text().to_ascii_lowercase())
+                    .unwrap_or_default();
+                if name.starts_with(".if") && arm_isa::is_directive(&name) {
+                    if let Some(token) = directive.name() {
+                        self.open(BlockKind::Conditional, &name, &token);
+                        if let Some(block) = self.blocks.last_mut() {
+                            block.branch = Some(false);
+                            block.taken = Some(true);
+                        }
+                    }
+                } else if matches!(name.as_str(), ".else" | ".elseif" | ".endif") {
+                    self.directive(directive, self.in_body());
+                }
+            }
+            return;
+        }
         let in_body = self.in_body();
         self.skip_local_refs = in_body;
         match statement {
@@ -503,7 +556,12 @@ impl Builder<'_> {
             }
             ".endm" | ".endmacro" => return self.close(BlockKind::Macro, &name, &name_token),
             ".endr" => return self.close(BlockKind::Repeat, &name, &name_token),
-            ".endif" => return self.close(BlockKind::Conditional, &name, &name_token),
+            ".endif" => {
+                if self.blocks.last().map(|b| b.kind) == Some(BlockKind::Conditional) {
+                    self.end_branch(node_range(directive.syntax()).start);
+                }
+                return self.close(BlockKind::Conditional, &name, &name_token);
+            }
             ".else" | ".elseif" => {
                 if self.blocks.last().map(|b| b.kind) != Some(BlockKind::Conditional) {
                     self.diagnostics.push(Diagnostic::error(
@@ -511,6 +569,24 @@ impl Builder<'_> {
                         "unbalanced-block",
                         format!("{name} without an open .if: add the .if, or remove this line"),
                     ));
+                    return;
+                }
+                self.end_branch(node_range(directive.syntax()).start);
+                let taken = self.blocks.last().and_then(|b| b.taken);
+                let branch = match (name.as_str(), taken) {
+                    (_, Some(true)) => Some(false),
+                    (".else", Some(false)) => Some(true),
+                    (".elseif", Some(false)) if !in_body => self.condition(".if", directive, &args),
+                    _ => None,
+                };
+                if let Some(block) = self.blocks.last_mut() {
+                    block.taken = match (block.taken, branch) {
+                        (Some(true), _) | (_, Some(true)) => Some(true),
+                        (Some(false), Some(false)) => Some(false),
+                        _ => None,
+                    };
+                    block.branch = branch;
+                    block.branch_start = node_range(directive.syntax()).end;
                 }
                 self.collect_refs(directive.syntax());
                 return;
@@ -519,7 +595,18 @@ impl Builder<'_> {
         }
         if name.starts_with(".if") && arm_isa::is_directive(&name) {
             self.collect_refs(directive.syntax());
+            // Inside a macro body, conditions depend on the arguments.
+            let branch = if in_body {
+                Some(true)
+            } else {
+                self.condition(&name, directive, &args)
+            };
             self.open(BlockKind::Conditional, &name, &name_token);
+            if let Some(block) = self.blocks.last_mut() {
+                block.branch = branch;
+                block.taken = branch;
+                block.branch_start = node_range(directive.syntax()).end;
+            }
             return;
         }
         if !in_body && !arm_isa::is_directive(&name) {
@@ -919,7 +1006,114 @@ impl Builder<'_> {
             kind,
             directive: directive.to_string(),
             range: range(token),
+            branch: Some(true),
+            taken: Some(true),
+            branch_start: range(token).end,
         });
+    }
+
+    /// Whether clang assembles the current line: false inside a branch whose
+    /// condition is false, None inside one we can't decide.
+    fn active(&self) -> Option<bool> {
+        let mut active = Some(true);
+        for block in self
+            .blocks
+            .iter()
+            .filter(|b| b.kind == BlockKind::Conditional)
+        {
+            match block.branch {
+                Some(false) => return Some(false),
+                None => active = None,
+                Some(true) => {}
+            }
+        }
+        active
+    }
+
+    /// Ends the top conditional's current branch at `end`, recording it as
+    /// inactive or undecided if it was.
+    fn end_branch(&mut self, end: usize) {
+        let Some(block) = self.blocks.last() else {
+            return;
+        };
+        let span = block.branch_start..end;
+        match block.branch {
+            Some(false) => self.inactive.push(span),
+            None => self.undecided.push(span),
+            Some(true) => {}
+        }
+    }
+
+    /// The value of an `.if`-family condition, as clang decides it with what's
+    /// defined above. None when it can't be known here.
+    fn condition(
+        &mut self,
+        name: &str,
+        directive: &ast::Directive,
+        args: &[SyntaxNode],
+    ) -> Option<bool> {
+        let raw: String = directive
+            .syntax()
+            .text()
+            .to_string()
+            .split_once(char::is_whitespace)
+            .map(|(_, rest)| rest.trim().to_string())
+            .unwrap_or_default();
+        let value = |builder: &mut Self| -> Option<i64> {
+            let node = args.first()?;
+            let scope = Scope {
+                constants: &builder.constants,
+                aliases: &builder.aliases,
+            };
+            match operands::eval(node, &scope) {
+                Value::Int(v) => Some(v),
+                Value::Symbol { name, .. } => {
+                    builder.diagnostics.push(Diagnostic::error(
+                        node_range(node),
+                        "non-constant-condition",
+                        format!(
+                            "expected absolute expression: '{name}' isn't a constant defined above this line"
+                        ),
+                    ));
+                    None
+                }
+                _ => None,
+            }
+        };
+        let defined = |builder: &Self| {
+            let symbol = args
+                .first()
+                .and_then(|a| ast::NameRef::cast(a.clone()))
+                .and_then(|n| n.name())?;
+            let text = unquote(symbol.text());
+            Some(builder.symbols.iter().any(|s| {
+                s.name == text && matches!(s.kind, SymbolKind::Label | SymbolKind::Constant)
+            }))
+        };
+        let strings = || -> Option<(String, String)> {
+            let (a, b) = raw.split_once(',')?;
+            Some((a.trim().to_string(), b.trim().to_string()))
+        };
+        let unquoted = |s: String| -> Option<String> {
+            Some(s.strip_prefix('"')?.strip_suffix('"')?.to_string())
+        };
+        match name {
+            ".if" | ".ifne" => value(self).map(|v| v != 0),
+            ".ifeq" => value(self).map(|v| v == 0),
+            ".iflt" => value(self).map(|v| v < 0),
+            ".ifle" => value(self).map(|v| v <= 0),
+            ".ifgt" => value(self).map(|v| v > 0),
+            ".ifge" => value(self).map(|v| v >= 0),
+            ".ifdef" => defined(self),
+            ".ifndef" | ".ifnotdef" => defined(self).map(|d| !d),
+            ".ifc" => strings().map(|(a, b)| a == b),
+            ".ifnc" => strings().map(|(a, b)| a != b),
+            ".ifeqs" => strings().and_then(|(a, b)| Some(unquoted(a)? == unquoted(b)?)),
+            ".ifnes" => strings().and_then(|(a, b)| Some(unquoted(a)? != unquoted(b)?)),
+            ".ifb" => Some(raw.is_empty()),
+            ".ifnb" => Some(!raw.is_empty()),
+            _ => None,
+        }
     }
 
     fn close(&mut self, kind: BlockKind, directive: &str, token: &SyntaxToken) {

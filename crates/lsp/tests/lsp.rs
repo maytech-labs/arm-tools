@@ -502,6 +502,17 @@ fn quick_fixes_and_folding() {
 }
 
 #[test]
+fn inactive_branches_are_greyed_out() {
+    let mut client = Client::start(true);
+    let diagnostics = client.open(".if 0\nfrob\n.endif\n");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["code"], "inactive");
+    assert_eq!(diagnostics[0]["severity"], 4);
+    assert_eq!(diagnostics[0]["tags"], json!([1]));
+    assert!(client.shutdown().success());
+}
+
+#[test]
 fn hover() {
     let mut client = Client::start(true);
     client.open("_f: ldp x29, x30, [sp], #16\n    b _f\n");

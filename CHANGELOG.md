@@ -34,5 +34,6 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Quick fixes: suggested instructions, directives, and conditions, ELF directive removal, stack rounding, page-offset variants, and the missing `add` after `adrp`. Code actions in armls; `armtool check --fix` and `lint --fix`.
 - Folding ranges in armls: macro, repeat, and conditional blocks, label sections, and comment runs.
 - CPU feature checks: "instruction requires: cssc" and friends, following clang's default target (apple-m1), `.arch`, `.cpu`, `.arch_extension`, and `[target]` in armtool.toml. Feature data generated from LLVM.
-- Design doc, roadmap, and ADRs 0001 to 0022.
+- Conditional assembly: `.if` and its relatives are evaluated as clang would; skipped branches aren't checked and are greyed out in the editor.
+- Design doc, roadmap, and ADRs 0001 to 0023.
 - `cargo xtask check` and CI on macOS and Linux.

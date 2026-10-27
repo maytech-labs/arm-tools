@@ -254,6 +254,16 @@ impl Server<'_> {
                 fix: None,
             }),
         }
+        // Branches clang skips, for editors to grey out.
+        for range in analysis.inactive() {
+            found.push(arm_sema::Diagnostic {
+                range: range.clone(),
+                severity: Severity::Hint,
+                code: "inactive",
+                message: "inactive: the condition is false here, so clang skips these lines".into(),
+                fix: None,
+            });
+        }
         found.sort_by_key(|d| (d.range.start, d.range.end));
         let diagnostics = found
             .iter()
@@ -268,6 +278,7 @@ impl Server<'_> {
                 code: Some(NumberOrString::String(d.code.into())),
                 source: Some("armls".into()),
                 message: d.message.clone(),
+                tags: (d.code == "inactive").then(|| vec![lsp_types::DiagnosticTag::UNNECESSARY]),
                 ..lsp_types::Diagnostic::default()
             })
             .collect();

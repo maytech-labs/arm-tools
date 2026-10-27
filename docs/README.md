@@ -31,3 +31,4 @@
 - [0020 The formatter changes only whitespace, and proves it](decisions/0020-formatter.md)
 - [0021 Quick fixes travel with diagnostics](decisions/0021-quick-fixes.md)
 - [0022 CPU features: clang's default target, `.arch` directives, and `[target]`](decisions/0022-cpu-features.md)
+- [0023 Conditional assembly: evaluate what clang would, skip what it skips](decisions/0023-conditional-assembly.md)

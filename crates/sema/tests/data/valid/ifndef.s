@@ -1,0 +1,3 @@
+.ifndef UNDEF
+nop
+.endif

@@ -96,6 +96,37 @@ fn oracle_clang_rejects_the_invalid_cases() {
 }
 
 #[test]
+fn valid_cases_have_no_diagnostics() {
+    for path in files(&manifest().join("tests/data/valid")) {
+        let analysis = Analysis::new(&read(&path));
+        assert_eq!(analysis.diagnostics(), [], "{}", path.display());
+    }
+}
+
+#[test]
+fn oracle_clang_accepts_the_valid_cases() {
+    for path in files(&manifest().join("tests/data/valid")) {
+        match clang_accepts(&path) {
+            None => return eprintln!("skipped: the clang oracle runs only on macOS"),
+            Some(false) => panic!("clang rejects {}, so it isn't valid", path.display()),
+            Some(true) => {}
+        }
+    }
+}
+
+#[test]
+fn inactive_branches_are_reported_for_greying_out() {
+    let text = ".if 0\nfrob\n.else\nnop\n.endif\n";
+    let analysis = Analysis::new(text);
+    assert_eq!(analysis.inactive().len(), 1);
+    let skipped = &text[analysis.inactive()[0].clone()];
+    assert!(
+        skipped.contains("frob") && !skipped.contains("nop"),
+        "{skipped:?}"
+    );
+}
+
+#[test]
 fn errors_point_at_the_problem() {
     assert_eq!(
         diagnostics("_f: nop\n_f: nop"),
