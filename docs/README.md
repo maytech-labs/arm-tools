@@ -34,3 +34,4 @@
 - [0023 Conditional assembly: evaluate what clang would, skip what it skips](decisions/0023-conditional-assembly.md)
 - [0024 Macro and repeat expansion: check what clang assembles, report it at the call](decisions/0024-macro-expansion.md)
 - [0025 Distribution: a Homebrew formula in this repo, and a thin VS Code extension](decisions/0025-distribution.md)
+- [0026 Dataflow rules report only what holds on every path](decisions/0026-dataflow-rules.md)

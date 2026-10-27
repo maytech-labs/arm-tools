@@ -2,7 +2,7 @@
 
 Tools for writing AArch64 assembly on macOS: a language server, a linter, and a formatter, built on one parser and one model of the instruction set.
 
-> **Status: pre-release.** `armls` and `armtool` work: errors as you type in clang's words, operand checking, 11 lint rules, hover, completion, navigation, rename, and highlighting. See the [roadmap](docs/roadmap.md).
+> **Status: pre-release.** `armls` and `armtool` work: errors as you type in clang's words, operand checking, 13 lint rules, hover, completion, navigation, rename, and highlighting. See the [roadmap](docs/roadmap.md).
 
 It targets the assembly Apple's toolchain accepts: `clang -c -arch arm64`, Mach-O, the Darwin ABI. That means `_`-prefixed symbols, `@PAGE` and `@PAGEOFF`, `;` comments, `%%` separators, and x18 reserved for the OS.
 

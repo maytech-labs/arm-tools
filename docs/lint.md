@@ -128,6 +128,22 @@ Along some path, the function moves sp and doesn't move it back before ret or a 
 
 Default level: warning.
 
+### `flow/undefined-register`
+
+Reads a scratch register that nothing has set
+
+x9 to x17 and v16 to v31 hold nothing useful when a function starts, and every call (bl, blr) may overwrite them. Reading one before setting it on every path gets garbage. Set it first, or keep the value in a callee-saved register (x19 to x28) across calls.
+
+Default level: warning.
+
+### `abi/syscall-number`
+
+svc without the syscall number in x16
+
+On Darwin, svc #0x80 takes the system call number in x16, not x8 as on Linux. Set x16 before the svc, for example mov x16, #4 for write.
+
+Default level: warning.
+
 ### `style/unused-label`
 
 A label nothing refers to
@@ -135,4 +151,3 @@ A label nothing refers to
 The label isn't exported and nothing in the file branches to or loads it. Remove it, or export it with .globl if other files need it.
 
 Default level: hint.
-

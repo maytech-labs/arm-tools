@@ -288,6 +288,49 @@ pub(crate) fn writes(insn: &Instruction) -> Vec<String> {
     out
 }
 
+/// The registers an instruction reads: every register operand except the
+/// destinations `writes` counts, plus x16 for `svc` (Darwin's syscall
+/// number) and x30 for `ret`. A destination that's also read, like `movk`'s,
+/// isn't counted: that can only miss a read, never invent one.
+pub(crate) fn reads(insn: &Instruction) -> Vec<String> {
+    let head = insn.mnemonic.head.as_str();
+    let ops = operands(insn);
+    let is_store = head.starts_with("st") && !STORE_EXCLUSIVE.contains(&head);
+    let destinations = if STORE_EXCLUSIVE.contains(&head) {
+        1
+    } else if is_store || FIRST_OPERAND_READ.contains(&head) {
+        0
+    } else if matches!(head, "ldp" | "ldnp" | "ldpsw" | "ldxp" | "ldaxp" | "ldiapp") {
+        2
+    } else {
+        1
+    };
+    let mut skipped = 0;
+    let mut out = Vec::new();
+    let mut in_memory = false;
+    for operand in ops {
+        if let Operand::Token(t) = operand {
+            in_memory |= t == "[";
+            continue;
+        }
+        let Some(id) = register_id(operand) else {
+            continue;
+        };
+        if !in_memory && skipped < destinations {
+            skipped += 1;
+            continue;
+        }
+        out.push(id);
+    }
+    if head == "svc" {
+        out.push("x16".into());
+    }
+    if head == "ret" && ops.is_empty() {
+        out.push("x30".into());
+    }
+    out
+}
+
 /// The registers an instruction stores to memory.
 pub(crate) fn stored(insn: &Instruction) -> Vec<String> {
     let head = insn.mnemonic.head.as_str();
@@ -432,6 +475,21 @@ mod tests {
         assert_eq!(writes(&insn("fmov d8, #1.0")), ["v8"]);
         assert_eq!(stored(&insn("stp x20, x19, [sp, #-32]!")), ["x20", "x19"]);
         assert_eq!(stored(&insn("stxr w1, x0, [x2]")), ["x0"]);
+    }
+
+    #[test]
+    fn reads() {
+        assert_eq!(super::reads(&insn("add x0, x9, x10")), ["x9", "x10"]);
+        assert_eq!(super::reads(&insn("str x9, [sp, #8]")), ["x9", "sp"]);
+        assert_eq!(super::reads(&insn("ldr x0, [x9]")), ["x9"]);
+        assert_eq!(super::reads(&insn("ldp x0, x1, [x9], #16")), ["x9"]);
+        assert_eq!(super::reads(&insn("cmp x9, #0")), ["x9"]);
+        assert_eq!(super::reads(&insn("stxr w1, x0, [x2]")), ["x0", "x2"]);
+        assert_eq!(super::reads(&insn("svc #0x80")), ["x16"]);
+        assert_eq!(
+            super::reads(&insn("fadd v16.4s, v17.4s, v18.4s")),
+            ["v17", "v18"]
+        );
     }
 
     #[test]

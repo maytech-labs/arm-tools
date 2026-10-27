@@ -71,6 +71,18 @@ pub(crate) const RULES: &[RuleInfo] = &[
         explanation: "Along some path, the function moves sp and doesn't move it back before ret or a tail call, so the caller's stack is corrupted. Every push needs a matching pop on every path.",
     },
     RuleInfo {
+        id: "flow/undefined-register",
+        default_level: Level::Warning,
+        summary: "Reads a scratch register that nothing has set",
+        explanation: "x9 to x17 and v16 to v31 hold nothing useful when a function starts, and every call (bl, blr) may overwrite them. Reading one before setting it on every path gets garbage. Set it first, or keep the value in a callee-saved register (x19 to x28) across calls.",
+    },
+    RuleInfo {
+        id: "abi/syscall-number",
+        default_level: Level::Warning,
+        summary: "svc without the syscall number in x16",
+        explanation: "On Darwin, svc #0x80 takes the system call number in x16, not x8 as on Linux. Set x16 before the svc, for example mov x16, #4 for write.",
+    },
+    RuleInfo {
         id: "style/unused-label",
         default_level: Level::Hint,
         summary: "A label nothing refers to",
@@ -100,6 +112,7 @@ pub(crate) fn run(analysis: &Analysis) -> Vec<Finding> {
             continue;
         }
         frame(function, &insns, &mut out);
+        undefined_registers(analysis, &cfg, function, entry, &mut out);
         callee_saved(function, &insns, &mut out);
         unbalanced_stack(analysis, &cfg, function, entry, &mut out);
     }
@@ -435,6 +448,117 @@ fn adrp(analysis: &Analysis, insns: &[&Instruction], out: &mut Vec<Finding>) {
     }
 }
 
+/// Registers with no defined value at entry or after a call.
+fn scratch_registers() -> impl Iterator<Item = String> {
+    (9..=17)
+        .map(|n| format!("x{n}"))
+        .chain((16..=31).map(|n| format!("v{n}")))
+}
+
+/// Reads of scratch registers that are undefined on every path to the read:
+/// at the start of an exported function (helpers may pass values in scratch
+/// registers by their own convention), or since a call.
+fn undefined_registers(
+    analysis: &Analysis,
+    cfg: &Cfg,
+    function: &Function,
+    entry: usize,
+    out: &mut Vec<Finding>,
+) {
+    use std::collections::BTreeMap;
+    type Undefined = BTreeMap<String, String>;
+    let exported = analysis
+        .symbols()
+        .iter()
+        .any(|s| s.name == function.name && s.exported);
+    let initial: Undefined = if exported {
+        scratch_registers()
+            .map(|r| (r, "when the function starts".to_string()))
+            .collect()
+    } else {
+        Undefined::new()
+    };
+    let line = |offset: usize| {
+        analysis
+            .line_index()
+            .line_col(analysis.text(), offset, arm_sema::Encoding::Utf8)
+            .line
+            + 1
+    };
+    // Undefined after an instruction, given undefined before it.
+    let transfer = |i: usize, before: &Undefined| -> Undefined {
+        let insn = cfg.insns[i];
+        let mut after = before.clone();
+        for written in flow::writes(insn) {
+            after.remove(&written);
+        }
+        if flow::is_call(insn) {
+            let origin = format!("since the call on line {}", line(insn.range.start));
+            for register in scratch_registers() {
+                after.insert(register, origin.clone());
+            }
+        }
+        after
+    };
+    // Undefined on every path: intersect where paths meet.
+    let mut before: HashMap<usize, Undefined> = HashMap::new();
+    let mut work = vec![(entry, initial)];
+    while let Some((i, incoming)) = work.pop() {
+        let merged = match before.get(&i) {
+            None => incoming,
+            Some(old) => old
+                .iter()
+                .filter(|(r, _)| incoming.contains_key(*r))
+                .map(|(r, o)| (r.clone(), o.clone()))
+                .collect(),
+        };
+        if before.get(&i) == Some(&merged) {
+            continue;
+        }
+        before.insert(i, merged.clone());
+        let after = transfer(i, &merged);
+        for next in cfg.successors(analysis, i).next {
+            work.push((next, after.clone()));
+        }
+    }
+    let mut reported = HashSet::new();
+    let mut indices: Vec<usize> = before.keys().copied().collect();
+    indices.sort_unstable();
+    for i in indices {
+        let insn = cfg.insns[i];
+        for register in flow::reads(insn) {
+            let Some(origin) = before[&i].get(&register) else {
+                continue;
+            };
+            if !reported.insert((register.clone(), origin.clone())) {
+                continue;
+            }
+            let shown = match register.strip_prefix('v') {
+                Some(n) if insn.mnemonic.head != "svc" => format!("v{n}"),
+                _ => register.clone(),
+            };
+            let found = if insn.mnemonic.head == "svc" && register == "x16" {
+                finding(
+                    "abi/syscall-number",
+                    insn.range.clone(),
+                    format!(
+                        "svc takes the syscall number in x16, but nothing sets x16 {origin} on any path here. Set it first, like mov x16, #1 for exit"
+                    ),
+                )
+            } else {
+                finding(
+                    "flow/undefined-register",
+                    insn.range.clone(),
+                    format!(
+                        "this reads {shown}, but nothing sets {shown} {origin} on any path here, so its value is garbage. Set it first, or keep the value in x19 to x28 across calls"
+                    ),
+                )
+            };
+            out.push(found);
+        }
+    }
+}
+
 /// sp changes along every path through a function must cancel out by each
 /// ret or tail call.
 fn unbalanced_stack(
@@ -688,6 +812,43 @@ _main:
             ),
             ".globl _f\n_f:\n    adrp x0, _msg@PAGE\n    add x0, x0, _msg@PAGEOFF\n    ret\n"
         );
+    }
+
+    #[test]
+    fn undefined_scratch_registers() {
+        // Read at entry of an exported function.
+        let entry = ".globl _f\n_f:\n  add x0, x9, #1\n  ret\n";
+        assert_eq!(rules(entry), ["flow/undefined-register"]);
+        // Clobbered by a call.
+        let call = ".globl _f\n_f:\n  stp x29, x30, [sp, #-16]!\n  mov x29, sp\n  mov x9, #1\n  bl _g\n  add x0, x9, #1\n  ldp x29, x30, [sp], #16\n  ret\n";
+        let found = lint(&Analysis::new(call), &Config::default());
+        let undefined: Vec<_> = found
+            .iter()
+            .filter(|d| d.code == "flow/undefined-register")
+            .collect();
+        assert_eq!(undefined.len(), 1);
+        assert!(
+            undefined[0].message.contains("since the call on line 6"),
+            "{}",
+            undefined[0].message
+        );
+        // Set on every path: fine.
+        let set = ".globl _f\n_f:\n  mov x9, #1\n  add x0, x9, #1\n  ret\n";
+        assert!(rules(set).is_empty());
+        // Set on only one path: not reported (must be undefined on every path).
+        let one_path = ".globl _f\n_f:\n  cbz x0, 1f\n  mov x9, #1\n1:\n  add x0, x9, #1\n  ret\n";
+        assert!(rules(one_path).is_empty());
+        // Helpers may take scratch registers as inputs by their own convention.
+        let helper = ".globl _f\n_f:\n  stp x29, x30, [sp, #-16]!\n  mov x29, sp\n  mov x9, #1\n  bl helper\n  ldp x29, x30, [sp], #16\n  ret\nhelper:\n  add x0, x9, #1\n  ret\n";
+        assert!(rules(helper).is_empty(), "{:?}", rules(helper));
+    }
+
+    #[test]
+    fn syscall_number() {
+        let missing = ".globl _main\n_main:\n  mov x0, #0\n  svc #0x80\n";
+        assert_eq!(rules(missing), ["abi/syscall-number"]);
+        let set = ".globl _main\n_main:\n  mov x0, #0\n  mov x16, #1\n  svc #0x80\n";
+        assert!(rules(set).is_empty());
     }
 
     #[test]
