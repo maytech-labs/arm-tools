@@ -125,6 +125,7 @@ pub struct Analysis {
     constants: HashMap<String, i64>,
     /// Register aliases in scope at the end of the file.
     aliases: HashMap<String, String>,
+    includes: Vec<(Range<usize>, PathBuf)>,
 }
 
 impl Analysis {
@@ -184,6 +185,7 @@ impl Analysis {
             diagnostics: Vec::new(),
             blocks: Vec::new(),
             has_include: false,
+            includes: Vec::new(),
             exported: Vec::new(),
             skip_local_refs: false,
             constants: seed.constants,
@@ -227,6 +229,7 @@ impl Analysis {
             macro_defs: builder.macro_defs,
             constants: builder.constants,
             aliases: builder.aliases,
+            includes: builder.includes,
         }
     }
 
@@ -294,6 +297,12 @@ impl Analysis {
         (definitions == 1)
             .then(|| self.constants.get(name).copied())
             .flatten()
+    }
+
+    /// The files this one `.include`s that were found: the range of each
+    /// file name, inside its quotes, and the path. Empty without a resolver.
+    pub fn includes(&self) -> &[(Range<usize>, PathBuf)] {
+        &self.includes
     }
 
     /// Byte ranges of `.if` branches clang skips because their condition is
@@ -445,6 +454,8 @@ struct Builder<'r> {
     diagnostics: Vec<Diagnostic>,
     blocks: Vec<Block>,
     has_include: bool,
+    /// Each `.include` found: its file name's range and the path.
+    includes: Vec<(Range<usize>, PathBuf)>,
     /// Names given to `.globl` or `.global`.
     exported: Vec<String>,
     /// Inside a macro or repeat body, where `1f` resolves per expansion.
@@ -831,12 +842,12 @@ impl Builder<'_> {
 
     /// Follows `.include "file"`, importing what the file defines.
     fn include(&mut self, directive: &ast::Directive, args: &[SyntaxNode], name: &SyntaxToken) {
-        let target = args.first().and_then(|a| {
+        let literal = args.first().and_then(|a| {
             a.children_with_tokens()
                 .filter_map(|e| e.into_token())
                 .find(|t| t.kind() == SyntaxKind::StringLit)
-                .map(|t| unquote(t.text()))
         });
+        let target = literal.as_ref().map(|t| unquote(t.text()));
         let (Some(resolver), Some(target)) = (self.resolver, target) else {
             self.has_include = true;
             return;
@@ -855,6 +866,12 @@ impl Builder<'_> {
             });
             return;
         };
+        if let Some(literal) = &literal {
+            let r = range(literal);
+            let closed = literal.text().len() >= 2 && literal.text().ends_with('"');
+            let end = if closed { r.end - 1 } else { r.end };
+            self.includes.push((r.start + 1..end, path.clone()));
+        }
         let key = crate::canonical(&path);
         if let Some(start) = self.stack.iter().position(|p| crate::canonical(p) == key) {
             let mut chain: Vec<String> = self.stack[start..]

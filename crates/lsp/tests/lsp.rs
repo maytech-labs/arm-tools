@@ -250,6 +250,7 @@ fn advertises_capabilities_and_negotiates_encoding() {
         "inlayHintProvider",
         "workspaceSymbolProvider",
         "signatureHelpProvider",
+        "documentLinkProvider",
     ] {
         assert!(!caps[capability].is_null(), "missing {capability}");
     }
@@ -413,6 +414,38 @@ fn includes_resolve_across_files_and_unsaved_edits() {
         .clone();
     assert_eq!(definition["uri"], macros_uri.as_str());
     assert_eq!(definition["range"]["start"], start(0, 7));
+
+    // The file name in .include is a link.
+    let links = client.request(
+        "textDocument/documentLink",
+        json!({ "textDocument": { "uri": main_uri } }),
+    )["result"]
+        .clone();
+    assert_eq!(links[0]["target"], macros_uri.as_str(), "{links}");
+    assert_eq!(links[0]["range"]["start"], start(0, 10));
+    assert_eq!(links[0]["range"]["end"], start(0, 18));
+
+    // In a .S file, #include lines link too.
+    std::fs::write(dir.join("defs.h"), "#define N 1\n").expect("header");
+    let s_uri = format!("file://{}/entry.S", dir.display());
+    open(
+        &mut client,
+        &s_uri,
+        "#include \"defs.h\"\n#include \"nowhere.h\"\n    mov x0, #N\n",
+    );
+    let _ = diagnostics_for(&mut client, &s_uri);
+    let links = client.request(
+        "textDocument/documentLink",
+        json!({ "textDocument": { "uri": s_uri } }),
+    )["result"]
+        .clone();
+    let targets: Vec<&str> = links
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|l| l["target"].as_str())
+        .collect();
+    assert_eq!(targets, [format!("file://{}/defs.h", dir.display())]);
 
     // Editing macros.s without saving updates main.s.
     open(&mut client, &macros_uri, macros);

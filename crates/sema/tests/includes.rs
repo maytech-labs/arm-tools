@@ -201,3 +201,17 @@ fn oracle_clang_agrees_on_a_project() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn found_includes_are_listed_for_links() {
+    let text = ".include \"macros.s\"\n.include \"missing.s\"\n";
+    let analysis = analyze(text, &[("macros.s", MACROS)]);
+    let found: Vec<(&str, PathBuf)> = analysis
+        .includes()
+        .iter()
+        .map(|(range, path)| (&text[range.clone()], path.clone()))
+        .collect();
+    assert_eq!(found, [("macros.s", PathBuf::from("/project/macros.s"))]);
+    // Without a resolver nothing is looked up.
+    assert!(Analysis::new(text).includes().is_empty());
+}

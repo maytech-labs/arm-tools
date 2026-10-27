@@ -590,6 +590,35 @@ fn in_comment_or_string(analysis: &Analysis, offset: usize) -> bool {
     })
 }
 
+/// The `#include "defs.h"` and `#include <defs.h>` lines of a `.S` file:
+/// each file name's range and the name.
+pub fn cpp_includes(text: &str) -> Vec<(Range<usize>, String)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for line in text.split_inclusive('\n') {
+        let at = start;
+        start += line.len();
+        let Some(rest) = line.trim_start().strip_prefix('#') else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix("include") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let close = match rest.chars().next() {
+            Some('"') => '"',
+            Some('<') => '>',
+            _ => continue,
+        };
+        let Some(len) = rest[1..].find(close) else {
+            continue;
+        };
+        let name_start = at + (line.len() - rest.len()) + 1;
+        out.push((name_start..name_start + len, rest[1..1 + len].to_string()));
+    }
+    out
+}
+
 /// Where a symbol is defined: a range in this file, or in an included one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Definition {
@@ -1387,6 +1416,22 @@ mod tests {
         let local = "_f: nop\n_g: nop\nb _f\n1: b 1b\n".find("1b").expect("1b");
         assert!(prepare_rename(&analysis, local).is_err());
         assert!(prepare_rename(&analysis, 12).is_err());
+    }
+
+    #[test]
+    fn finds_cpp_include_lines() {
+        let text = "#include \"defs.h\"\n  #  include <sys/syscall.h>\n#define X 1\n#include \"open\n.include \"a.s\"\n";
+        let found: Vec<(&str, String)> = cpp_includes(text)
+            .into_iter()
+            .map(|(range, name)| (&text[range], name))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("defs.h", "defs.h".to_string()),
+                ("sys/syscall.h", "sys/syscall.h".to_string())
+            ]
+        );
     }
 
     #[test]

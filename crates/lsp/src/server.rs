@@ -12,10 +12,10 @@ use lsp_types::notification::{
     PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
-    FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest, InlayHintRequest,
-    PrepareRenameRequest, References, Rename, Request as _, SemanticTokensFullRequest,
-    SignatureHelpRequest,
+    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentLinkRequest,
+    DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest,
+    InlayHintRequest, PrepareRenameRequest, References, Rename, Request as _,
+    SemanticTokensFullRequest, SignatureHelpRequest,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
@@ -142,6 +142,10 @@ fn capabilities(encoding: Encoding) -> ServerCapabilities {
         code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
         folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        document_link_provider: Some(lsp_types::DocumentLinkOptions {
+            resolve_provider: Some(false),
+            work_done_progress_options: lsp_types::WorkDoneProgressOptions::default(),
+        }),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -412,6 +416,43 @@ impl Server<'_> {
                             .collect();
                         CompletionResponse::Array(items)
                     });
+                Ok(ok(id, result))
+            }
+            DocumentLinkRequest::METHOD => {
+                let params: lsp_types::DocumentLinkParams = params(request)?;
+                let uri = &params.text_document.uri;
+                let result = self.documents.get(uri).map(|doc| {
+                    let analysis = &doc.analysis;
+                    let link = |range: Range<usize>, path: &Path| {
+                        Some(lsp_types::DocumentLink {
+                            range: self.range(analysis, range),
+                            target: Some(path_uri(path)?),
+                            tooltip: Some(path.display().to_string()),
+                            data: None,
+                        })
+                    };
+                    let mut links: Vec<lsp_types::DocumentLink> = analysis
+                        .includes()
+                        .iter()
+                        .filter_map(|(range, path)| link(range.clone(), path))
+                        .collect();
+                    // `#include` in a .S file, searched as clang's -I paths are.
+                    let path = file_path(uri).map(|p| arm_sema::normalize(&p));
+                    if let Some(path) = path.filter(|p| arm_sema::needs_preprocessing(p)) {
+                        let config = path
+                            .parent()
+                            .and_then(|dir| arm_lint::Config::discover(dir).ok())
+                            .unwrap_or_default();
+                        let dirs = config.include_dirs(&path);
+                        for (range, name) in ide::cpp_includes(analysis.text()) {
+                            let found = dirs.iter().map(|d| d.join(&name)).find(|p| p.is_file());
+                            if let Some(found) = found {
+                                links.extend(link(range, &arm_sema::normalize(&found)));
+                            }
+                        }
+                    }
+                    links
+                });
                 Ok(ok(id, result))
             }
             SignatureHelpRequest::METHOD => {

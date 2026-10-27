@@ -49,3 +49,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `armls` signature help: the forms an instruction's operands so far could begin, with the operand at the cursor.
 - `armls` completion offers what fits the operand: registers of the right width, condition codes, barriers, prefetch operations, shifts and extends, labels (with `@PAGE` and `@PAGEOFF`, and global labels from other files), and constants. Mnemonics show a signature.
 - `armls` renames global labels in every file of the project that defines or uses them.
+- `armls` document links: the file names in `.include`, and `#include` in `.S` files, open the file.
