@@ -89,6 +89,24 @@ Callers expect x19 to x28 and the low 64 bits of v8 to v15 to survive a call. A 
 
 Default level: warning.
 
+### `abi/callee-saved-restore`
+
+Returns without restoring a callee-saved register it saved
+
+The function saves x19 to x28 or d8 to d15, changes it, and then returns along some path without loading the saved value back. Its caller gets the changed value. Restore every saved register before every ret, usually with the ldp that mirrors the prologue's stp.
+
+```asm
+_f:
+    stp x19, x20, [sp, #-16]!
+    mov x19, x0
+    cbz x0, 1f
+    ldp x19, x20, [sp], #16
+    ret
+1:  ret              ; x19 is still changed on this path
+```
+
+Default level: warning.
+
 ### `addr/adrp-pageoff`
 
 adrp loads a page that nothing adds the offset to

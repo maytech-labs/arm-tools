@@ -107,7 +107,8 @@ Done when the first rules in the design run in `armls` and `armtool lint`, each 
 ## M7: deeper analysis
 
 - [x] Dataflow lints: undefined scratch registers, syscall number in x16 ([0026](decisions/0026-dataflow-rules.md))
-- [ ] Register liveness: dead stores, values lost across calls
+- [x] Values lost across calls: scratch and argument registers after a call, and callee-saved registers not restored on every path
+- [ ] Register liveness: dead stores
 - [ ] Darwin syscall argument checks by syscall number
 
 ## M8: distribution

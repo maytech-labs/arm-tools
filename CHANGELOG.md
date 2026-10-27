@@ -66,3 +66,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - armls on Linux: register hover, syscall names (x8, `svc #0`), snippets, completion and signatures in ELF syntax (`:lo12:`, bare `adrp` labels), and C functions under their unprefixed names.
 - Linux examples in examples/linux, built and run on an Arm Linux CI runner.
 - Lint: LSE atomics (`ldadd`, `swp`, `cas`) read and write the right registers, and a function that never returns, like `_start`, may change callee-saved registers.
+- Lint: `abi/callee-saved-restore` finds a saved register returned changed on some path, and `flow/undefined-register` now covers x2 to x7 and v4 to v7 after calls to other files' functions.

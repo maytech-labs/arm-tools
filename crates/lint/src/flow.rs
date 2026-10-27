@@ -386,6 +386,27 @@ pub(crate) fn reads(insn: &Instruction, platform: arm_isa::Platform) -> Vec<Stri
 }
 
 /// The registers an instruction stores to memory.
+/// The registers a load from the stack (`[sp, ...]` or `[x29, ...]`)
+/// brings back: how a function restores what its prologue saved.
+pub(crate) fn restored(insn: &Instruction) -> Vec<String> {
+    let head = insn.mnemonic.head.as_str();
+    if !head.starts_with("ld") || atomic(head).is_some() {
+        return Vec::new();
+    }
+    let ops = operands(insn);
+    let base = ops
+        .iter()
+        .skip_while(|o| !matches!(o, Operand::Token(t) if t == "["))
+        .find_map(register_id);
+    if !matches!(base.as_deref(), Some("sp" | "x29")) {
+        return Vec::new();
+    }
+    ops.iter()
+        .take_while(|o| !matches!(o, Operand::Token(t) if t == "["))
+        .filter_map(register_id)
+        .collect()
+}
+
 pub(crate) fn stored(insn: &Instruction) -> Vec<String> {
     let head = insn.mnemonic.head.as_str();
     if !head.starts_with("st") {

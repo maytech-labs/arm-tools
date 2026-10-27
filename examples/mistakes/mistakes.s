@@ -49,6 +49,19 @@ _syscall:
         svc     #0x80                       ; svc without x16 set
         ret
 
+        .globl  _clamp
+        .p2align 2
+_clamp:
+        stp     x19, x20, [sp, #-16]!
+        mov     x19, x0
+        cmp     x19, #100
+        b.gt    1f
+        ldp     x19, x20, [sp], #16
+        ret
+1:      add     sp, sp, #16                 ; balanced, but x19 isn't restored
+        mov     x0, #100
+        ret                                 ; returns with the caller's x19 changed
+
         .type   _main, @function            ; ELF only, quick fix: remove the line
 
         .section __DATA,__data

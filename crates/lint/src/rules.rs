@@ -41,6 +41,12 @@ pub(crate) const RULES: &[RuleInfo] = &[
         explanation: "Callers expect x19 to x28 and the low 64 bits of v8 to v15 to survive a call. A function that writes one must store it in its prologue and restore it before returning.",
     },
     RuleInfo {
+        id: "abi/callee-saved-restore",
+        default_level: Level::Warning,
+        summary: "Returns without restoring a callee-saved register it saved",
+        explanation: "The function saves x19 to x28 or d8 to d15, changes it, and then returns along some path without loading the saved value back. Its caller gets the changed value. Restore every saved register before every ret, usually with the ldp that mirrors the prologue's stp.",
+    },
+    RuleInfo {
         id: "addr/adrp-pageoff",
         default_level: Level::Warning,
         summary: "adrp loads a page that nothing adds the offset to",
@@ -117,6 +123,7 @@ pub(crate) fn run(analysis: &Analysis) -> Vec<Finding> {
         frame(function, &insns, darwin, &mut out);
         undefined_registers(analysis, &cfg, function, entry, &mut out);
         callee_saved(function, &insns, &mut out);
+        callee_saved_restore(analysis, &cfg, function, entry, &insns, &mut out);
         unbalanced_stack(analysis, &cfg, function, entry, &mut out);
     }
     out
@@ -522,6 +529,90 @@ fn adrp(analysis: &Analysis, insns: &[&Instruction], out: &mut Vec<Finding>) {
     }
 }
 
+/// Callee-saved registers changed and not restored on some path to a return.
+/// Only for registers the function saves somewhere: never saving them is
+/// `abi/callee-saved`'s finding.
+fn callee_saved_restore(
+    analysis: &Analysis,
+    cfg: &Cfg,
+    function: &Function,
+    entry: usize,
+    insns: &[&Instruction],
+    out: &mut Vec<Finding>,
+) {
+    use std::collections::BTreeSet;
+    let saved: HashSet<String> = insns
+        .iter()
+        .flat_map(|i| flow::stored(i))
+        .filter(|r| is_callee_saved(r))
+        .collect();
+    if saved.is_empty() {
+        return;
+    }
+    // Changed and not yet restored, on some path: union where paths meet.
+    let mut before: HashMap<usize, BTreeSet<String>> = HashMap::new();
+    let mut work = vec![(entry, BTreeSet::new())];
+    let mut reported = HashSet::new();
+    while let Some((i, incoming)) = work.pop() {
+        let mut merged: BTreeSet<String> = before.get(&i).cloned().unwrap_or_default();
+        let size = merged.len();
+        merged.extend(incoming);
+        let grew = merged.len() > size;
+        if before.contains_key(&i) && !grew {
+            continue;
+        }
+        before.insert(i, merged.clone());
+        let insn = cfg.insns[i];
+        let mut after = merged;
+        let restored = flow::restored(insn);
+        for register in flow::writes(insn) {
+            if saved.contains(&register) && !restored.contains(&register) {
+                after.insert(register);
+            }
+        }
+        for register in &restored {
+            after.remove(register);
+        }
+        let head = insn.mnemonic.head.as_str();
+        if matches!(head, "ret" | "retaa" | "retab") {
+            for register in &after {
+                if reported.insert(register.clone()) {
+                    let shown = match register.strip_prefix('v') {
+                        Some(n) => format!("d{n}"),
+                        None => register.clone(),
+                    };
+                    out.push(finding(
+                        "abi/callee-saved-restore",
+                        insn.range.clone(),
+                        format!(
+                            "'{}' saves {shown} but returns here with it changed: load it back before this ret, on this path too",
+                            function.name
+                        ),
+                    ));
+                }
+            }
+        }
+        for next in cfg.successors(analysis, i).next {
+            work.push((next, after.clone()));
+        }
+    }
+}
+
+/// Argument registers a call doesn't return values in: x2 to x7, and v4 to
+/// v7 (v0 to v3 can hold a floating-point aggregate result).
+fn argument_registers() -> impl Iterator<Item = String> {
+    (2..=7)
+        .map(|n| format!("x{n}"))
+        .chain((4..=7).map(|n| format!("v{n}")))
+}
+
+/// Whether a call goes to a function this file defines without exporting:
+/// a helper whose conventions are its own.
+fn calls_local_helper(analysis: &Analysis, insn: &Instruction) -> bool {
+    insn.mnemonic.head == "bl"
+        && flow::target(analysis, insn).is_some_and(|s| !analysis.symbols()[s].exported)
+}
+
 /// Registers with no defined value at entry or after a call.
 /// On Linux, also x8: svc's syscall number, and the indirect result
 /// register, which calls don't preserve.
@@ -573,6 +664,16 @@ fn undefined_registers(
             let origin = format!("since the call on line {}", line(insn.range.start));
             for register in scratch_registers(analysis.platform()) {
                 after.insert(register, origin.clone());
+            }
+            // Argument registers past the return value are garbage after a
+            // call too, unless it's to a helper in this file, which may
+            // return more by its own convention.
+            for register in argument_registers() {
+                if calls_local_helper(analysis, insn) {
+                    after.remove(&register);
+                } else {
+                    after.insert(register, origin.clone());
+                }
             }
         }
         after
@@ -1043,6 +1144,42 @@ _main:
             "{}",
             mismatch.message
         );
+    }
+
+    #[test]
+    fn callee_saved_restore() {
+        // Restored on one path, not the other.
+        let early = ".globl _f\n_f:\n  stp x19, x20, [sp, #-16]!\n  mov x19, x0\n  cbz x0, 1f\n  ldp x19, x20, [sp], #16\n  ret\n1:\n  add sp, sp, #16\n  ret\n";
+        let found = findings(early);
+        assert_eq!(
+            found,
+            [("abi/callee-saved-restore", "ret".to_string())],
+            "{found:?}"
+        );
+        // Restored on every path: fine.
+        let good = ".globl _f\n_f:\n  stp x19, x20, [sp, #-16]!\n  mov x19, x0\n  cbz x0, 1f\n  mov x0, #1\n1:\n  ldp x19, x20, [sp], #16\n  ret\n";
+        assert_eq!(findings(good), []);
+        // Restored with ldr from the frame pointer, or a d register.
+        let fp = ".globl _f\n_f:\n  stp x29, x30, [sp, #-32]!\n  mov x29, sp\n  str d8, [x29, #16]\n  fmov d8, x0\n  ldr d8, [x29, #16]\n  ldp x29, x30, [sp], #32\n  ret\n";
+        assert_eq!(findings(fp), []);
+        // Never saved at all is abi/callee-saved, not this.
+        let never = ".globl _f\n_f:\n  mov x19, x0\n  ret\n";
+        assert_eq!(rules(never), ["abi/callee-saved"]);
+    }
+
+    #[test]
+    fn argument_registers_after_calls() {
+        // printf may have changed x2.
+        let after = ".globl _f\n_f:\n  stp x29, x30, [sp, #-16]!\n  mov x29, sp\n  mov x2, #1\n  bl _printf\n  add x0, x0, x2\n  ldp x29, x30, [sp], #16\n  ret\n";
+        let found = findings(after);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].0, "flow/undefined-register");
+        // x0 and x1 are results; a local helper may return more.
+        let fine = ".globl _f\n_f:\n  stp x29, x30, [sp, #-16]!\n  mov x29, sp\n  bl _printf\n  mov x3, x1\n  bl helper\n  add x0, x2, x3\n  ldp x29, x30, [sp], #16\n  ret\nhelper:\n  mov x2, #1\n  ret\n";
+        assert_eq!(findings(fine), []);
+        // At entry, arguments are defined.
+        let entry = ".globl _f\n_f:\n  add x0, x6, x7\n  ret\n";
+        assert_eq!(findings(entry), []);
     }
 
     #[test]

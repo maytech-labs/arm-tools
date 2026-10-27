@@ -71,6 +71,7 @@ fn mistakes_shows_each_problem() {
         "flow/unbalanced-stack",
         "flow/unreachable",
         "abi/callee-saved",
+        "abi/callee-saved-restore",
         "abi/syscall-number",
         "unknown-directive",
     ] {
