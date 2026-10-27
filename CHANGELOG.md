@@ -37,6 +37,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Conditional assembly: `.if` and its relatives are evaluated as clang would; skipped branches aren't checked and are greyed out in the editor.
 - Macro calls, `.rept`, `.irp`, and `.irpc` are expanded and checked, with clang's argument rules; problems are reported at the call.
 - Lint rules `flow/undefined-register` (scratch registers read before they're set, at entry or after a call) and `abi/syscall-number` (svc without x16), by must-dataflow over the control-flow graph.
+- `examples/`: six programs that build and run (syscalls, printf, recursion, NEON, macros and includes, the C preprocessor), and a file of labeled mistakes to try armls on.
+- Operand errors explain a constant used above its definition, which clang only folds when it's defined first.
 - Inlay hints in armls: constant values where they're used, and the syscall a `mov x16, #n` sets up.
 - `.S` files go through clang's C preprocessor for diagnostics, mapped back to the lines you wrote.
 - A Homebrew formula (`brew install --HEAD arm-tools` from this repo's tap) and a VS Code extension in `editors/vscode`.

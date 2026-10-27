@@ -183,6 +183,16 @@ fn operand_errors_use_clangs_words() {
 }
 
 #[test]
+fn constants_used_above_their_definition_are_explained() {
+    let analysis = Analysis::new("cmp x0, #limit\nlimit = 15\n");
+    let message = &analysis.diagnostics()[0].message;
+    assert!(
+        message.contains("'limit' is defined below this line"),
+        "{message}"
+    );
+}
+
+#[test]
 fn valid_operands_have_no_diagnostics() {
     let text = "\
 counter .req x19

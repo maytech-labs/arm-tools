@@ -43,6 +43,10 @@ cargo xtask nvim-smoke   # armls inside headless Neovim
 
 Needs Rust 1.98 (pinned in `rust-toolchain.toml`). The oracle tests need Xcode's clang and run only on macOS.
 
+## Examples
+
+[examples/](examples/README.md) has small programs that build and run, a tour of what to try in the editor, and a file of deliberate mistakes.
+
 ## Docs
 
 - [Design](docs/design.md): architecture and how each part works

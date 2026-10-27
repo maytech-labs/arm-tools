@@ -188,6 +188,7 @@ impl Analysis {
             constants: seed.constants,
             aliases: seed.aliases,
             later_macros: macro_names(&parse),
+            later_constants: constant_names(&parse),
         };
         for error in parse.errors() {
             builder.diagnostics.push(Diagnostic::error(
@@ -400,6 +401,9 @@ struct Builder<'r> {
     constants: HashMap<String, i64>,
     /// Register aliases in scope: lowercase alias to register text.
     aliases: HashMap<String, String>,
+    /// Every constant defined anywhere in the file, for a better message when
+    /// one is used above its definition.
+    later_constants: Vec<String>,
     /// Every macro defined anywhere in the file, for a better message when one
     /// is called before its definition.
     later_macros: Vec<String>,
@@ -933,6 +937,21 @@ impl Builder<'_> {
         {
             message.push_str(&format!(": the closest form is `{}`", form.signature()));
         }
+        // A constant used above its definition is a symbol to clang, not a
+        // number: say so, since clang's message doesn't.
+        let late = mismatch.operand.and_then(|i| match &flat.operands[i] {
+            arm_isa::Operand::Imm(arm_isa::Imm::Symbol {
+                name,
+                variant: None,
+                ..
+            }) => self.later_constants.contains(name).then(|| name.clone()),
+            _ => None,
+        });
+        if let Some(name) = late {
+            message.push_str(&format!(
+                ". '{name}' is defined below this line, and clang only uses a constant's value when it's defined above: move its definition up"
+            ));
+        }
         self.diagnostics
             .push(Diagnostic::error(at, "invalid-operand", message));
         Some(flat)
@@ -1457,6 +1476,32 @@ impl Builder<'_> {
 }
 
 /// Names of every `.macro` in the file.
+/// Names of every `.set`, `.equ`, `.equiv`, and `name = value` in the file.
+fn constant_names(parse: &Parse) -> Vec<String> {
+    parse
+        .tree()
+        .statements()
+        .filter_map(|s| match s {
+            Statement::Assignment(a) => a.name().map(|n| unquote(n.text())),
+            Statement::Directive(d)
+                if d.name().is_some_and(|n| {
+                    matches!(
+                        n.text().to_ascii_lowercase().as_str(),
+                        ".set" | ".equ" | ".equiv"
+                    )
+                }) =>
+            {
+                d.args()
+                    .next()
+                    .and_then(ast::NameRef::cast)
+                    .and_then(|n| n.name())
+                    .map(|n| unquote(n.text()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn macro_names(parse: &Parse) -> Vec<String> {
     parse
         .tree()
