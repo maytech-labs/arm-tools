@@ -319,6 +319,10 @@ pub fn completions(analysis: &Analysis, offset: usize, globals: &[String]) -> Ve
         return out;
     }
     if let Some((mnemonic, operands)) = before.split_once(char::is_whitespace) {
+        let out = alias_completions(analysis, mnemonic, operands);
+        if !out.is_empty() {
+            return out;
+        }
         let candidates = candidates(analysis, mnemonic, operands);
         let out = operand_completions(analysis, offset, &candidates, globals);
         if !out.is_empty() {
@@ -452,6 +456,83 @@ fn operand_completions(
         }
     }
     out
+}
+
+/// Commas outside `{ }` lists: which operand the cursor is in.
+fn operand_index(operands: &str) -> usize {
+    let mut depth = 0i32;
+    let mut commas = 0;
+    for c in operands.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            ',' if depth <= 0 => commas += 1,
+            _ => {}
+        }
+    }
+    commas
+}
+
+/// Operands of the aliases clang handles in C++, which have no forms in
+/// the tables: SYS operations, registers, and constants.
+fn alias_completions(analysis: &Analysis, mnemonic: &str, operands: &str) -> Vec<Completion> {
+    let parsed = Mnemonic::parse(mnemonic);
+    let head = parsed.head.as_str();
+    let index = operand_index(operands);
+    let names = |class: &str| {
+        arm_isa::operand_class(class)
+            .map(registers_in)
+            .unwrap_or_default()
+    };
+    let register = |name: String| completion(name, CompletionKind::Register, None);
+    match parsed.special() {
+        Some(Special::SysAlias) if index == 0 => arm_isa::sys_operations(head)
+            .iter()
+            .map(|op| {
+                let detail = if op.register {
+                    "takes Xt"
+                } else {
+                    "no register"
+                };
+                completion(op.name.to_string(), CompletionKind::Condition, Some(detail))
+            })
+            .collect(),
+        Some(Special::SysAlias) if index == 1 => {
+            let mut out: Vec<Completion> = names("GPR64").into_iter().map(register).collect();
+            out.push(register("xzr".into()));
+            out
+        }
+        Some(Special::Bitfield) => {
+            let registers = if head == "bfc" { 1 } else { 2 };
+            if index < registers {
+                // The destination's width sets the source's.
+                let wide = !operands.trim_start().starts_with(['w', 'W']);
+                let class = if index == 0 || wide { "GPR64" } else { "GPR32" };
+                let mut out: Vec<Completion> = if index == 0 {
+                    names("GPR64")
+                        .into_iter()
+                        .chain(names("GPR32"))
+                        .map(register)
+                        .collect()
+                } else {
+                    names(class).into_iter().map(register).collect()
+                };
+                out.retain(|c| !c.label.ends_with("sp"));
+                out
+            } else {
+                analysis
+                    .symbols()
+                    .iter()
+                    .filter(|s| s.kind == SymbolKind::Constant)
+                    .map(|s| {
+                        let detail = analysis.constant_value(&s.name).map(|v| format!("= {v}"));
+                        completion(s.name.clone(), CompletionKind::Constant, detail.as_deref())
+                    })
+                    .collect()
+            }
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// What an operand class accepts, for completion.
@@ -609,19 +690,23 @@ pub fn signature_help(analysis: &Analysis, offset: usize) -> Option<SignatureHel
                 (parts, active)
             })
             .collect();
+    let commas = operand_index(operands);
+    let head = Mnemonic::parse(mnemonic).head;
+    if let Some(shape) = arm_isa::alias_signature(&head) {
+        // Clang handles it in C++; it has no forms in the tables.
+        let (name, params) = shape.split_once(' ').unwrap_or((shape, ""));
+        let params: Vec<String> = params.split(", ").map(str::to_string).collect();
+        let active = (commas < params.len()).then_some(commas);
+        let parts = arm_isa::Signature {
+            head: name.to_string(),
+            params,
+            param_of: Vec::new(),
+        };
+        return Some(SignatureHelp {
+            signatures: vec![(parts, active)],
+        });
+    }
     if found.is_empty() {
-        // Count the commas outside `{ }` lists.
-        let mut depth = 0i32;
-        let mut commas = 0;
-        for c in operands.chars() {
-            match c {
-                '{' => depth += 1,
-                '}' => depth -= 1,
-                ',' if depth <= 0 => commas += 1,
-                _ => {}
-            }
-        }
-        let head = Mnemonic::parse(mnemonic).head;
         found = arm_isa::forms(&head)
             .filter(|f| f.syntax() == Syntax::Generic)
             .map(|form| {
@@ -1487,6 +1572,38 @@ mod tests {
     }
 
     #[test]
+    fn alias_operand_completion() {
+        let ops = operand_labels("  dc ", &[]);
+        assert!(
+            has(&ops, &["civac", "zva"]) && lacks(&ops, &["x0"]),
+            "{ops:?}"
+        );
+        let tlbi = operand_labels("  tlbi ", &[]);
+        assert!(has(&tlbi, &["vmalle1is", "vae1"]), "{tlbi:?}");
+        let xt = operand_labels("  dc civac, ", &[]);
+        assert!(
+            has(&xt, &["x0", "xzr"]) && lacks(&xt, &["w0", "sp", "civac"]),
+            "{xt:?}"
+        );
+        let rd = operand_labels("  ubfx ", &[]);
+        assert!(
+            has(&rd, &["x0", "w0"]) && lacks(&rd, &["sp", "wsp"]),
+            "{rd:?}"
+        );
+        let rn = operand_labels("  ubfx w0, ", &[]);
+        assert!(has(&rn, &["w1"]) && lacks(&rn, &["x1"]), "{rn:?}");
+        let rn = operand_labels("  ubfx x0, ", &[]);
+        assert!(has(&rn, &["x1"]) && lacks(&rn, &["w1"]), "{rn:?}");
+        let lsb = operand_labels("bits = 3\n  ubfx x0, x1, ", &[]);
+        assert_eq!(lsb, ["bits"]);
+        let detail = completions(&Analysis::new("  ic "), 5, &[])
+            .into_iter()
+            .find(|c| c.label == "iallu")
+            .and_then(|c| c.detail);
+        assert_eq!(detail.as_deref(), Some("no register"));
+    }
+
+    #[test]
     fn mnemonics_show_a_signature() {
         let all = completions(&Analysis::new("  "), 2, &[]);
         let ldp = all
@@ -1545,8 +1662,17 @@ mod tests {
             labels.len()
         );
         assert!(active.iter().all(|a| a.is_none_or(|a| a == 2)));
-        // SYS aliases are C++ in clang, so there are no forms to show.
-        assert!(signature("  dc ").is_none());
+        // Aliases clang handles in C++ show how they're written.
+        let (labels, active) = signature("  dc civac, ").expect("help");
+        assert_eq!(
+            (labels, active),
+            (vec!["dc <op>, Xt".to_string()], vec![Some(1)])
+        );
+        let (labels, active) = signature("  ubfx x0, x1, #4, ").expect("help");
+        assert_eq!(labels, ["ubfx Rd, Rn, #lsb, #width"]);
+        assert_eq!(active, [Some(3)]);
+        let (_, active) = signature("  bfc x0, #1, #2, ").expect("help");
+        assert_eq!(active, [None], "past the last operand");
         assert!(signature("  ldr x0, [x1] ; a comment ").is_none());
         assert!(signature("  .quad ").is_none());
         assert!(signature("  ldr").is_none());

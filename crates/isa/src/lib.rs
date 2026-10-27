@@ -7,6 +7,7 @@
 //! flattened into tokens, so `ldp x0, x1, [sp, #16]!` is
 //! `GPR64, GPR64, [, GPR64sp, SImm7s8, ], !`.
 
+mod aliases;
 mod descriptions;
 mod docs;
 mod features;
@@ -18,6 +19,7 @@ mod operand;
 mod predicates;
 mod tables;
 
+pub use aliases::{SysOp, alias_signature, sys_operations};
 pub use descriptions::instruction_description;
 pub use docs::{Signature, directive_description, syscall_name};
 pub use features::FeatureSet;

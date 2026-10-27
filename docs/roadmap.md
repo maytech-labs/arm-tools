@@ -37,7 +37,7 @@ Done when every instruction clang accepts in the corpus matches exactly one form
 - [x] Predicates: 378 of 385 ported from AArch64AsmParser.cpp, the rest permissive ([0017](decisions/0017-operand-matching.md))
 - [x] Matcher: forms in clang's order and clang's near-miss messages; 0 disagreements with clang on 2,352 files
 - [x] CPU feature checks (`instruction requires: sve2`), following `.arch`, `.cpu`, `.arch_extension`, and `[target]` ([0022](decisions/0022-cpu-features.md))
-- [ ] Hand-written table of C++-parser aliases (`ubfx`, `bfi`, `bne`...) and SYS aliases, each tested against clang
+- [x] The aliases clang handles in C++: bitfield aliases, `lsl #imm`, and SYS aliases, each tested against clang ([0037](decisions/0037-cpp-aliases.md))
 - [x] Hover text: our descriptions of about 270 common instructions ([0036](decisions/0036-instruction-descriptions.md))
 
 ## M3: sema

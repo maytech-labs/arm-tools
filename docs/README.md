@@ -45,3 +45,4 @@
 - [0034 Index C function definitions by scanning](decisions/0034-c-functions.md)
 - [0035 Keeping armls fast on large files and projects](decisions/0035-performance.md)
 - [0036 Instruction descriptions as a Rust table](decisions/0036-instruction-descriptions.md)
+- [0037 Checking the aliases clang handles in C++](decisions/0037-cpp-aliases.md)

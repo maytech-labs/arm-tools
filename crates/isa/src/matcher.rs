@@ -53,12 +53,20 @@ pub fn match_for(
     operands: &[Operand],
     features: Option<&crate::FeatureSet>,
 ) -> MatchResult {
-    if mnemonic.special().is_some() && mnemonic.special() != Some(Special::Bitfield) {
-        return MatchResult::Unchecked;
+    match mnemonic.special() {
+        Some(Special::SysAlias) => return crate::aliases::check_sys(mnemonic, operands),
+        Some(Special::SyspAlias) => return MatchResult::Unchecked,
+        Some(Special::Bitfield) => {
+            return crate::aliases::check_bitfield(mnemonic, operands, features);
+        }
+        None => {}
     }
-    if mnemonic.special() == Some(Special::Bitfield)
-        || (mnemonic.head == "lsl" && matches!(operands.last(), Some(Operand::Imm(_))))
+    if mnemonic.head == "lsl"
+        && let Some(result) = crate::aliases::check_lsl(operands, features)
     {
+        return result;
+    }
+    if mnemonic.head == "lsl" && matches!(operands.last(), Some(Operand::Imm(Imm::Other))) {
         return MatchResult::Unchecked;
     }
     // Tokens clang makes from the mnemonic: `b.eq` is `.` and a condition;
@@ -780,18 +788,17 @@ mod tests {
     }
 
     #[test]
-    fn handled_in_cpp_is_unchecked() {
-        for name in ["ubfx", "tlbi", "dc"] {
-            assert_eq!(
-                match_instruction(&Mnemonic::parse(name), &[]),
-                MatchResult::Unchecked,
-                "{name}"
-            );
-        }
-        let ops = [reg("x0"), reg("x1"), imm(3)];
+    fn handled_in_cpp() {
+        // tlbip is still left to clang; the rest are checked in aliases.rs.
         assert_eq!(
-            match_instruction(&Mnemonic::parse("lsl"), &ops),
+            match_instruction(&Mnemonic::parse("tlbip"), &[]),
             MatchResult::Unchecked
+        );
+        let ops = [reg("x0"), reg("x1"), imm(3)];
+        assert_eq!(matched("lsl", &ops), Some("UBFMXri"));
+        assert_eq!(
+            matched("ubfx", &[reg("x0"), reg("x1"), imm(4), imm(8)]),
+            Some("UBFMXri")
         );
     }
 }
