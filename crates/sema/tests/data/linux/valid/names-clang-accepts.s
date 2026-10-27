@@ -1,5 +1,7 @@
 // The same on Linux, plus adr and adrp to labels named like shifts.
 limit = 0x1234
+        // Clang before LLVM 21 (Xcode 16) wants SVE on for these names.
+        .arch_extension sve
         b.none  target
         csel    x0, x1, x2, any
         bl      lsl
