@@ -21,7 +21,7 @@ mod tables;
 
 pub use aliases::{SysOp, alias_signature, sys_operations};
 pub use descriptions::instruction_description;
-pub use docs::{Signature, directive_description, syscall_name};
+pub use docs::{Signature, directive_description, syscall_name, syscall_name_for};
 pub use features::FeatureSet;
 use generated::*;
 pub use matcher::{MatchResult, Mismatch, match_for, match_instruction, match_prefix};

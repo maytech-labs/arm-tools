@@ -24,7 +24,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("adcs", "Add with carry, and set the flags."),
     (
         "add",
-        "Add: Rd = Rn + an immediate, or a register optionally shifted or extended. With `@PAGEOFF`, the low 12 bits of an address after `adrp`.",
+        "Add: Rd = Rn + an immediate, or a register optionally shifted or extended. With `@PAGEOFF` (`:lo12:` on Linux), the low 12 bits of an address after `adrp`.",
     ),
     ("addp", "Add adjacent pairs of vector elements."),
     ("adds", "Add and set the flags (N, Z, C, V)."),
@@ -32,7 +32,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("adr", "Form a PC-relative address within 1 MB."),
     (
         "adrp",
-        "Form the address of a symbol's 4 KB page, PC-relative within 4 GB: `adrp x0, sym@PAGE`. Add the low bits with `add` or a load's `@PAGEOFF`.",
+        "Form the address of a symbol's 4 KB page, PC-relative within 4 GB: `adrp x0, sym@PAGE` on Darwin, `adrp x0, sym` on Linux. Add the low bits with `add` or a load's `@PAGEOFF` (`:lo12:` on Linux).",
     ),
     (
         "aesd",
@@ -697,7 +697,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "svc",
-        "Supervisor call: enter the kernel. On Darwin, `svc #0x80` with the syscall number in x16; errors set the carry flag.",
+        "Supervisor call: enter the kernel. On Darwin, `svc #0x80` with the syscall number in x16; errors set the carry flag. On Linux, `svc #0` with the number in x8; errors come back as -errno in x0.",
     ),
     (
         "swp",

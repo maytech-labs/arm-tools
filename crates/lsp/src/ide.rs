@@ -5,7 +5,9 @@
 use std::collections::BTreeSet;
 use std::ops::Range;
 
-use arm_isa::{ClassKind, Form, Mnemonic, OperandClass, Register, RegisterKind, Special, Syntax};
+use arm_isa::{
+    ClassKind, Form, Mnemonic, OperandClass, Platform, Register, RegisterKind, Special, Syntax,
+};
 use arm_sema::{Analysis, Symbol, SymbolKind};
 use arm_syntax::{NodeOrToken, SyntaxKind, SyntaxToken, TextRange};
 
@@ -40,7 +42,7 @@ pub fn hover(analysis: &Analysis, offset: usize) -> Option<Hover> {
             if let Some(symbol) = analysis.symbol_at(offset) {
                 symbol_hover(analysis, &analysis.symbols()[symbol])
             } else if token.kind() == SyntaxKind::Ident {
-                register_hover(token.text())?
+                register_hover(token.text(), analysis.platform())?
             } else {
                 return None;
             }
@@ -85,7 +87,7 @@ fn instruction_hover(analysis: &Analysis, text: &str) -> Option<String> {
     let mut seen = BTreeSet::new();
     let mut lines = Vec::new();
     for form in arm_isa::forms(&mnemonic.head).filter(|f| f.syntax() == Syntax::Generic) {
-        let signature = form.signature();
+        let signature = in_syntax(form.signature(), analysis.platform());
         if !seen.insert(signature.clone()) {
             continue;
         }
@@ -145,11 +147,29 @@ fn symbol_hover(analysis: &Analysis, symbol: &Symbol) -> String {
     )
 }
 
-fn register_hover(text: &str) -> Option<String> {
+fn register_hover(text: &str, platform: Platform) -> Option<String> {
     // `v0.4s` is the register `v0` with an arrangement.
     let base = text.split('.').next().unwrap_or(text);
     let register = Register::lookup(base).next()?;
-    Some(register.description())
+    Some(register.description_for(platform))
+}
+
+/// A signature in a platform's syntax: on Linux, `adrp` takes a bare label,
+/// not `<label>@PAGE`.
+fn in_syntax(signature: String, platform: Platform) -> String {
+    match platform {
+        Platform::Darwin => signature,
+        Platform::Linux => signature.replace("<label>@PAGE", "<label>"),
+    }
+}
+
+fn signature_in_syntax(mut parts: arm_isa::Signature, platform: Platform) -> arm_isa::Signature {
+    parts.params = parts
+        .params
+        .into_iter()
+        .map(|p| in_syntax(p, platform))
+        .collect();
+    parts
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,6 +270,79 @@ pub const SNIPPETS: &[Snippet] = &[
     },
 ];
 
+/// Templates for Linux: ELF symbol types and sizes, `:lo12:` addressing,
+/// and Linux system calls (x8 holds the number, `svc #0`).
+pub const LINUX_SNIPPETS: &[Snippet] = &[
+    Snippet {
+        label: "func",
+        detail: "global function with a frame record",
+        body: ".globl ${1:name}\n.p2align 2\n.type ${1:name}, %function\n${1:name}:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    $0\n    ldp x29, x30, [sp], #16\n    ret\n.size ${1:name}, .-${1:name}",
+    },
+    Snippet {
+        label: "main",
+        detail: "main, returning 0",
+        body: ".text\n.globl main\n.p2align 2\n.type main, %function\nmain:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    $0\n    mov w0, #0\n    ldp x29, x30, [sp], #16\n    ret\n.size main, .-main",
+    },
+    Snippet {
+        label: "prologue",
+        detail: "push the frame record",
+        body: "stp x29, x30, [sp, #-16]!\n    mov x29, sp",
+    },
+    Snippet {
+        label: "epilogue",
+        detail: "pop the frame record and return",
+        body: "ldp x29, x30, [sp], #16\n    ret",
+    },
+    Snippet {
+        label: "addr",
+        detail: "address of a symbol: adrp and add :lo12:",
+        body: "adrp ${1:x0}, ${2:symbol}\n    add ${1:x0}, ${1:x0}, :lo12:${2:symbol}",
+    },
+    Snippet {
+        label: "load",
+        detail: "load from a symbol: adrp and ldr :lo12:",
+        body: "adrp ${1:x8}, ${2:symbol}\n    ldr ${3:x0}, [${1:x8}, :lo12:${2:symbol}]",
+    },
+    Snippet {
+        label: "got",
+        detail: "address of an external symbol through the GOT",
+        body: "adrp ${1:x0}, :got:${2:symbol}\n    ldr ${1:x0}, [${1:x0}, :got_lo12:${2:symbol}]",
+    },
+    Snippet {
+        label: "syscall",
+        detail: "Linux system call: number in x8, svc #0",
+        body: "mov x8, #${1:64}\n    svc #0",
+    },
+    Snippet {
+        label: "write",
+        detail: "write(fd, buf, len) system call",
+        body: "mov x0, #${1:1}\n    adrp x1, ${2:msg}\n    add x1, x1, :lo12:${2:msg}\n    mov x2, #${3:len}\n    mov x8, #64\n    svc #0",
+    },
+    Snippet {
+        label: "exit",
+        detail: "exit(status) system call",
+        body: "mov x0, #${1:0}\n    mov x8, #93\n    svc #0",
+    },
+    Snippet {
+        label: "loop",
+        detail: "count a register down to zero",
+        body: "1:\n    $0\n    subs ${1:x19}, ${1:x19}, #1\n    b.ne 1b",
+    },
+    Snippet {
+        label: "cstring",
+        detail: "a NUL-terminated string in .rodata",
+        body: ".section .rodata\n${1:msg}:\n    .asciz \"${2:text}\"",
+    },
+];
+
+/// The snippets for a platform's conventions.
+pub fn snippets(platform: Platform) -> &'static [Snippet] {
+    match platform {
+        Platform::Darwin => SNIPPETS,
+        Platform::Linux => LINUX_SNIPPETS,
+    }
+}
+
 /// Completions at a byte offset: instructions, macros, and directives where a
 /// statement starts, and in operands what the instruction's forms accept
 /// there (docs/decisions/0030-operand-aware-editing.md). `globals` are labels
@@ -287,7 +380,7 @@ pub fn completions(analysis: &Analysis, offset: usize, globals: &[String]) -> Ve
                     )
                 });
             }
-            for snippet in SNIPPETS {
+            for snippet in snippets(analysis.platform()) {
                 out.push(Completion {
                     label: snippet.label.to_string(),
                     kind: CompletionKind::Snippet,
@@ -410,7 +503,7 @@ fn operand_completions(
         for keyword in expects.keywords {
             push(&mut out, keyword, CompletionKind::Condition, None);
         }
-        if let Some(suffix) = expects.labels {
+        if let Some(form) = expects.labels {
             let locals = analysis
                 .symbols()
                 .iter()
@@ -419,7 +512,7 @@ fn operand_completions(
             for name in locals.chain(globals.iter().cloned()) {
                 push(
                     &mut out,
-                    format!("{name}{suffix}"),
+                    form.write(&name, analysis.platform()),
                     CompletionKind::Label,
                     None,
                 );
@@ -541,9 +634,30 @@ struct Expects {
     registers: Vec<String>,
     /// Condition codes, barrier options, shifts, and other names.
     keywords: Vec<String>,
-    /// Labels, with what to write after them: `@PAGE`.
-    labels: Option<&'static str>,
+    /// Labels, and how to write them.
+    labels: Option<LabelForm>,
     constants: bool,
+}
+
+/// How a label is written in an operand.
+#[derive(Debug, Clone, Copy)]
+enum LabelForm {
+    Plain,
+    /// The 4 KB page, for adrp: `_msg@PAGE`, or plain `msg` on Linux.
+    Page,
+    /// The offset in the page: `_msg@PAGEOFF`, or `:lo12:msg` on Linux.
+    PageOffset,
+}
+
+impl LabelForm {
+    fn write(self, name: &str, platform: Platform) -> String {
+        match (self, platform) {
+            (LabelForm::Plain, _) | (LabelForm::Page, Platform::Linux) => name.to_string(),
+            (LabelForm::Page, Platform::Darwin) => format!("{name}@PAGE"),
+            (LabelForm::PageOffset, Platform::Darwin) => format!("{name}@PAGEOFF"),
+            (LabelForm::PageOffset, Platform::Linux) => format!(":lo12:{name}"),
+        }
+    }
 }
 
 fn expects(class: OperandClass) -> Expects {
@@ -616,11 +730,13 @@ fn expects(class: OperandClass) -> Expects {
         }
         "isMemWExtend" => out.keywords = words(&["uxtw", "sxtw"]),
         "isMemXExtend" => out.keywords = words(&["lsl", "sxtx"]),
-        "isBranchTarget" | "isAdrLabel" | "isPAuthPCRelLabel16Operand" => out.labels = Some(""),
-        "isAdrpLabel" => out.labels = Some("@PAGE"),
+        "isBranchTarget" | "isAdrLabel" | "isPAuthPCRelLabel16Operand" => {
+            out.labels = Some(LabelForm::Plain);
+        }
+        "isAdrpLabel" => out.labels = Some(LabelForm::Page),
         "isUImm12Offset" | "isAddSubImm" => {
             // `ldr x0, [x0, _msg@PAGEOFF]` and `add x0, x0, _msg@PAGEOFF`.
-            out.labels = Some("@PAGEOFF");
+            out.labels = Some(LabelForm::PageOffset);
             out.constants = true;
         }
         _ => {
@@ -687,7 +803,7 @@ pub fn signature_help(analysis: &Analysis, offset: usize) -> Option<SignatureHel
             .map(|(form, next)| {
                 let parts = form.signature_parts();
                 let active = parts.param_of.get(next).copied().flatten();
-                (parts, active)
+                (signature_in_syntax(parts, analysis.platform()), active)
             })
             .collect();
     let commas = operand_index(operands);
@@ -710,7 +826,7 @@ pub fn signature_help(analysis: &Analysis, offset: usize) -> Option<SignatureHel
         found = arm_isa::forms(&head)
             .filter(|f| f.syntax() == Syntax::Generic)
             .map(|form| {
-                let parts = form.signature_parts();
+                let parts = signature_in_syntax(form.signature_parts(), analysis.platform());
                 let active = (commas < parts.params.len()).then_some(commas);
                 (parts, active)
             })
@@ -1075,8 +1191,13 @@ pub fn inlay_hints(analysis: &Analysis) -> Vec<(usize, String)> {
         let Some(ops) = &insn.operands else {
             continue;
         };
-        let is_x16 = matches!(ops.first(), Some(arm_isa::Operand::Register(r))
-            if matches!(r.register.llvm_name(), "X16" | "W16"));
+        // The syscall number: x16 on Darwin, x8 on Linux.
+        let wanted: &[&str] = match analysis.platform() {
+            Platform::Darwin => &["X16", "W16"],
+            Platform::Linux => &["X8", "W8"],
+        };
+        let is_number = matches!(ops.first(), Some(arm_isa::Operand::Register(r))
+            if wanted.contains(&r.register.llvm_name()));
         let number = match ops.get(1) {
             Some(arm_isa::Operand::Imm(arm_isa::Imm::Constant(n))) => Some(*n),
             _ => None,
@@ -1084,9 +1205,9 @@ pub fn inlay_hints(analysis: &Analysis) -> Vec<(usize, String)> {
         let svc_follows = items[i + 1..].iter().take(8).any(
             |item| matches!(item, arm_sema::Item::Instruction(next) if next.mnemonic.head == "svc"),
         );
-        let name = number.and_then(arm_isa::syscall_name);
+        let name = number.and_then(|n| arm_isa::syscall_name_for(analysis.platform(), n));
         if let (true, "mov" | "movz", true, Some(name)) =
-            (is_x16, insn.mnemonic.head.as_str(), svc_follows, name)
+            (is_number, insn.mnemonic.head.as_str(), svc_follows, name)
         {
             out.push((insn.range.end, format!("syscall {name}")));
         }
@@ -1533,28 +1654,50 @@ mod tests {
     fn snippets_expand_to_valid_assembly() {
         let dir = std::env::temp_dir().join(format!("armls-snippets-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
-        for snippet in SNIPPETS {
-            assert!(!arm_isa::is_instruction(snippet.label), "{}", snippet.label);
-            let body = expand(snippet.body);
-            // Define what the defaults refer to, unless the snippet does.
-            let mut text = "len = 5\n".to_string();
-            for name in ["_name", "_msg", "_symbol"] {
-                if !body.contains(&format!("{name}:")) {
-                    text.push_str(&format!("{name}: nop\n"));
+        let platforms = [
+            (
+                Platform::Darwin,
+                ["_name", "_msg", "_symbol"],
+                &["-arch", "arm64"][..],
+            ),
+            (
+                Platform::Linux,
+                ["name", "msg", "symbol"],
+                &["--target=aarch64-linux-gnu"][..],
+            ),
+        ];
+        for (platform, names, target) in platforms {
+            let set = snippets(platform);
+            assert_eq!(
+                set.len(),
+                SNIPPETS.len(),
+                "the same snippets on each platform"
+            );
+            for snippet in set {
+                assert!(!arm_isa::is_instruction(snippet.label), "{}", snippet.label);
+                let body = expand(snippet.body);
+                // Define what the defaults refer to, unless the snippet does.
+                let mut text = "len = 5\n".to_string();
+                for name in names {
+                    if !body.contains(&format!("{name}:")) {
+                        text.push_str(&format!("{name}: nop\n"));
+                    }
                 }
-            }
-            text.push_str(&format!("    {body}\n"));
-            let analysis = Analysis::new(&text);
-            assert_eq!(analysis.diagnostics(), &[], "{}:\n{text}", snippet.label);
-            if cfg!(target_os = "macos") {
-                let source = dir.join(format!("{}.s", snippet.label));
-                std::fs::write(&source, &text).expect("write");
-                let status = std::process::Command::new("xcrun")
-                    .args(["clang", "-c", "-arch", "arm64", "-o", "/dev/null"])
-                    .arg(&source)
-                    .status()
-                    .expect("clang runs");
-                assert!(status.success(), "clang rejects {}:\n{text}", snippet.label);
+                text.push_str(&format!("    {body}\n"));
+                let analysis = Analysis::for_platform(&text, platform);
+                assert_eq!(analysis.diagnostics(), &[], "{}:\n{text}", snippet.label);
+                if cfg!(target_os = "macos") {
+                    let source = dir.join(format!("{}-{}.s", snippet.label, platform.name()));
+                    std::fs::write(&source, &text).expect("write");
+                    let status = std::process::Command::new("xcrun")
+                        .arg("clang")
+                        .args(target)
+                        .args(["-c", "-o", "/dev/null"])
+                        .arg(&source)
+                        .status()
+                        .expect("clang runs");
+                    assert!(status.success(), "clang rejects {}:\n{text}", snippet.label);
+                }
             }
         }
         let _ = std::fs::remove_dir_all(&dir);
@@ -1565,6 +1708,15 @@ mod tests {
             func.insert
                 .as_deref()
                 .is_some_and(|b| b.contains("${1:name}"))
+        );
+        // Linux files get Linux's.
+        let linux = completions(&Analysis::for_platform("  ", Platform::Linux), 2, &[]);
+        let write = linux.iter().find(|c| c.label == "write").expect("write");
+        assert!(
+            write
+                .insert
+                .as_deref()
+                .is_some_and(|b| b.contains("mov x8, #64"))
         );
         // Not after a dot or in operands.
         assert!(labels("  .", 3).iter().all(|l| l != "func"));
@@ -1601,6 +1753,48 @@ mod tests {
             .find(|c| c.label == "iallu")
             .and_then(|c| c.detail);
         assert_eq!(detail.as_deref(), Some("no register"));
+    }
+
+    #[test]
+    fn linux_editor_features() {
+        let linux = |text: &str| Analysis::for_platform(text, Platform::Linux);
+        // Labels in Linux's relocation syntax.
+        let page = completions(&linux("msg: nop\n  adrp x0, "), 21, &[]);
+        assert!(page.iter().any(|c| c.label == "msg"), "{page:?}");
+        assert!(page.iter().all(|c| !c.label.contains("@PAGE")));
+        let text = "msg: nop\n  add x0, x0, ";
+        let offset = completions(&linux(text), text.len(), &[]);
+        assert!(offset.iter().any(|c| c.label == ":lo12:msg"), "{offset:?}");
+        // Signatures and hover without @PAGE.
+        let help = signature_help(&linux("  adrp x0, "), 11).expect("help");
+        assert!(
+            help.signatures
+                .iter()
+                .all(|(p, _)| !p.label().contains("@PAGE"))
+        );
+        let hover = hover(&linux("adrp x0, msg\nmsg: nop\n"), 1)
+            .expect("hover")
+            .markdown;
+        let forms = hover.split("```asm").nth(1).unwrap_or_default();
+        assert!(
+            forms.contains("adrp Xn, <label>") && !forms.contains("@PAGE"),
+            "{hover}"
+        );
+        // Registers and syscalls as Linux has them.
+        let x18 = hover_on(&linux("mov x18, #1\n"), "x18");
+        assert!(x18.contains("Linux leaves it to programs"), "{x18}");
+        let hints = inlay_hints(&linux("mov x8, #64\nsvc #0\n"));
+        assert_eq!(
+            hints.iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>(),
+            ["syscall write"]
+        );
+        // x16 isn't the syscall register on Linux.
+        assert!(inlay_hints(&linux("mov x16, #4\nsvc #0\n")).is_empty());
+    }
+
+    fn hover_on(analysis: &Analysis, needle: &str) -> String {
+        let at = analysis.text().find(needle).expect("needle") + 1;
+        hover(analysis, at).map(|h| h.markdown).unwrap_or_default()
     }
 
     #[test]

@@ -160,6 +160,11 @@ fn predicate_placeholder(predicate: &str) -> Option<String> {
 impl Register {
     /// What the register is, and its role in Apple's arm64 ABI.
     pub fn description(self) -> String {
+        self.description_for(crate::Platform::Darwin)
+    }
+
+    /// What the register is, and its role in the platform's ABI.
+    pub fn description_for(self, platform: crate::Platform) -> String {
         let name = self.name();
         let kind = self.kind();
         if kind != RegisterKind::Scalar {
@@ -182,9 +187,9 @@ impl Register {
         }
         let number: Option<u32> = name.get(1..).and_then(|n| n.parse().ok());
         match (name.as_bytes().first(), number) {
-            (Some(b'x'), Some(n)) => format!("{name}: 64-bit general-purpose register.{}", gpr_abi(n)),
+            (Some(b'x'), Some(n)) => format!("{name}: 64-bit general-purpose register.{}", gpr_abi(n, platform)),
             (Some(b'w'), Some(n)) => {
-                format!("{name}: 32-bit general-purpose register, the low half of x{n}. Writing it zeroes the high half.{}", gpr_abi(n))
+                format!("{name}: 32-bit general-purpose register, the low half of x{n}. Writing it zeroes the high half.{}", gpr_abi(n, platform))
             }
             (Some(b'b'), Some(n)) => format!("{name}: 8-bit SIMD and floating-point register, the low byte of v{n}."),
             (Some(b'h'), Some(n)) => format!("{name}: 16-bit SIMD and floating-point register, the low half of s{n}."),
@@ -200,16 +205,34 @@ impl Register {
                 "wsp" => "wsp: the low 32 bits of the stack pointer.".into(),
                 "xzr" | "x31" => format!("{name}: the zero register. Reads as 0; writes are discarded."),
                 "wzr" | "w31" => format!("{name}: the 32-bit zero register. Reads as 0; writes are discarded."),
-                "fp" => format!("fp: another name for x29.{}", gpr_abi(29)),
-                "lr" => format!("lr: another name for x30.{}", gpr_abi(30)),
+                "fp" => format!("fp: another name for x29.{}", gpr_abi(29, platform)),
+                "lr" => format!("lr: another name for x30.{}", gpr_abi(30, platform)),
                 _ => format!("{name}: {} register.", self.llvm_name()),
             },
         }
     }
 }
 
-/// The register's role in Apple's arm64 calling convention.
-fn gpr_abi(n: u32) -> &'static str {
+/// The register's role in the platform's calling convention: Apple's
+/// arm64 ABI, or the standard AAPCS64 as Linux uses it.
+fn gpr_abi(n: u32, platform: crate::Platform) -> &'static str {
+    if platform == crate::Platform::Linux {
+        match n {
+            8 => {
+                return " Holds the address for an indirect (large struct) return value, and the system call number for svc #0.";
+            }
+            16 | 17 => {
+                return " Intra-procedure-call scratch (IP0/IP1): the linker's veneers may overwrite it.";
+            }
+            18 => {
+                return " The platform register. Linux leaves it to programs as scratch; Android reserves it for the shadow call stack.";
+            }
+            29 => {
+                return " The frame pointer (fp). Optional on Linux, but a frame record chain helps debuggers and profilers.";
+            }
+            _ => {}
+        }
+    }
     match n {
         0 => " Holds the first argument and the return value.",
         1..=7 => " Holds an argument; x1 also holds the second half of a 128-bit return value.",
@@ -235,6 +258,76 @@ fn vector_abi(v: &str) -> &'static str {
         Ok(_) => " Scratch: callers can't rely on it surviving a call.",
         Err(_) => "",
     }
+}
+
+/// The name of a system call by number on a platform, for the common ones.
+pub fn syscall_name_for(platform: crate::Platform, number: i64) -> Option<&'static str> {
+    match platform {
+        crate::Platform::Darwin => syscall_name(number),
+        crate::Platform::Linux => linux_syscall_name(number),
+    }
+}
+
+/// The name of a Linux system call on arm64 by number, for the common ones:
+/// what `svc #0` does with that number in x8. From the kernel's generic
+/// table, include/uapi/asm-generic/unistd.h, a stable interface.
+fn linux_syscall_name(number: i64) -> Option<&'static str> {
+    Some(match number {
+        17 => "getcwd",
+        23 => "dup",
+        24 => "dup3",
+        25 => "fcntl",
+        29 => "ioctl",
+        34 => "mkdirat",
+        35 => "unlinkat",
+        48 => "faccessat",
+        49 => "chdir",
+        56 => "openat",
+        57 => "close",
+        59 => "pipe2",
+        61 => "getdents64",
+        62 => "lseek",
+        63 => "read",
+        64 => "write",
+        65 => "readv",
+        66 => "writev",
+        67 => "pread64",
+        68 => "pwrite64",
+        78 => "readlinkat",
+        79 => "newfstatat",
+        80 => "fstat",
+        93 => "exit",
+        94 => "exit_group",
+        96 => "set_tid_address",
+        98 => "futex",
+        101 => "nanosleep",
+        113 => "clock_gettime",
+        124 => "sched_yield",
+        129 => "kill",
+        134 => "rt_sigaction",
+        135 => "rt_sigprocmask",
+        160 => "uname",
+        167 => "prctl",
+        172 => "getpid",
+        174 => "getuid",
+        178 => "gettid",
+        198 => "socket",
+        200 => "bind",
+        201 => "listen",
+        202 => "accept",
+        203 => "connect",
+        206 => "sendto",
+        207 => "recvfrom",
+        214 => "brk",
+        215 => "munmap",
+        220 => "clone",
+        221 => "execve",
+        222 => "mmap",
+        226 => "mprotect",
+        260 => "wait4",
+        278 => "getrandom",
+        _ => return None,
+    })
 }
 
 /// The name of a Darwin system call by number, for the common ones: what
@@ -453,6 +546,22 @@ mod tests {
         assert!(scalar("d8").description().contains("callee-saved"));
         assert!(scalar("sp").description().contains("16-byte aligned"));
         assert!(scalar("lr").description().contains("x30"));
+        let linux = crate::Platform::Linux;
+        assert!(
+            scalar("x18")
+                .description_for(linux)
+                .contains("Linux leaves it to programs")
+        );
+        assert!(scalar("x8").description_for(linux).contains("svc #0"));
+        assert!(
+            scalar("x19")
+                .description_for(linux)
+                .contains("Callee-saved")
+        );
+        assert!(!scalar("x16").description_for(linux).contains("Darwin"));
+        assert_eq!(syscall_name_for(linux, 64), Some("write"));
+        assert_eq!(syscall_name_for(linux, 93), Some("exit"));
+        assert_eq!(syscall_name_for(crate::Platform::Darwin, 4), Some("write"));
         let v0 = Register::lookup_kind("v0", RegisterKind::NeonVector).expect("v0");
         assert!(v0.description().contains("arguments"));
     }

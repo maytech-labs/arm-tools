@@ -759,6 +759,84 @@ fn navigation_into_c() {
 }
 
 #[test]
+fn linux_project() {
+    let root = std::env::temp_dir().join(format!("armls-linux-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("dir");
+    std::fs::write(
+        root.join("armtool.toml"),
+        "[target]\nplatform = \"linux\"\n",
+    )
+    .expect("config");
+    // Nothing in the text says Linux; the config does.
+    let main = ".globl main\nmain:\n    mov x18, #1 ; mov x8, #93\n    svc #0\n    adrp x0, msg\n    add x0, x0, :lo12:msg\n    ret\nmsg: .asciz \"hi\"\n";
+    std::fs::write(root.join("main.s"), main).expect("write");
+    let root_uri = format!("file://{}", root.display());
+    let uri = format!("{root_uri}/main.s");
+    let mut client = Client::start_in(true, Some(&root_uri));
+    client.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "asm", "version": 1, "text": main } }),
+    );
+    let diagnostics = loop {
+        let message = client.receive();
+        if message["method"] == "textDocument/publishDiagnostics"
+            && message["params"]["uri"] == uri.as_str()
+        {
+            break message["params"]["diagnostics"].clone();
+        }
+    };
+    // No x18 warning, `;` separates, :lo12: is fine, and x8 is set.
+    let codes: Vec<&str> = diagnostics
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|d| d["code"].as_str())
+        .filter(|c| *c != "style/unused-label")
+        .collect();
+    assert!(codes.is_empty(), "{diagnostics}");
+
+    let at = |line: u32, character: u32| json!({ "textDocument": { "uri": uri }, "position": start(line, character) });
+    let hover = client.request("textDocument/hover", at(2, 9))["result"].clone();
+    let text = hover["contents"]["value"].as_str().unwrap_or_default();
+    assert!(text.contains("Linux leaves it to programs"), "{text}");
+    let hints = client.request(
+        "textDocument/inlayHint",
+        json!({ "textDocument": { "uri": uri }, "range": { "start": start(0, 0), "end": start(8, 0) } }),
+    )["result"]
+        .clone();
+    let labels: Vec<&str> = hints
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|h| h["label"].as_str())
+        .collect();
+    assert!(labels.contains(&"syscall exit"), "{hints}");
+
+    // Formatting keeps `;` as a separator, not a comment.
+    let edits = client.request(
+        "textDocument/formatting",
+        json!({ "textDocument": { "uri": uri }, "options": { "tabSize": 4, "insertSpaces": true } }),
+    )["result"]
+        .clone();
+    let all: String = edits
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e["newText"].as_str())
+        .collect();
+    // A line with a separator is kept as written; on Darwin the `;` would
+    // start a comment, aligned to the comment column.
+    assert!(all.contains("\n    mov x18, #1 ; mov x8, #93\n"), "{edits}");
+    assert!(
+        all.contains("    svc     #0"),
+        "other lines are formatted: {edits}"
+    );
+    assert!(client.shutdown().success());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn call_hierarchy_across_files() {
     let root = std::env::temp_dir().join(format!("armls-calls-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

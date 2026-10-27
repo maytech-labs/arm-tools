@@ -5,15 +5,15 @@
 //! another object file on Mach-O, so those are the definitions indexed. Each
 //! file's uses of names it doesn't define are indexed too, for references.
 //! C and Objective-C files add their non-static function definitions, under
-//! the symbol names the compiler gives them: `foo` is `_foo`
-//! (docs/decisions/0034-c-functions.md).
+//! the symbol names the compiler gives them: `foo` is `_foo` on Darwin and
+//! `foo` on Linux (docs/decisions/0034-c-functions.md, 0038-linux.md).
 
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use arm_sema::{Analysis, SymbolKind};
+use arm_sema::{Analysis, Platform, SymbolKind};
 
 /// Directories never worth searching.
 const SKIP_DIRS: &[&str] = &["target", "build", "node_modules", "DerivedData", ".build"];
@@ -81,17 +81,43 @@ impl Index {
         index
     }
 
-    /// Reindexes one file from its current text.
+    /// Reindexes one file from its current text, for the platform its
+    /// `armtool.toml` sets, else what the file gives away, else Darwin.
     pub fn update(&mut self, path: &Path, text: &str) {
+        let configured = path
+            .parent()
+            .and_then(|dir| arm_lint::Config::discover(dir).ok())
+            .and_then(|c| c.platform);
         let file = if is_c(path) {
+            // A C function is `_foo` on Darwin and `foo` on Linux; without a
+            // configured platform, index both.
+            let mut definitions = c_functions(text);
+            match configured {
+                Some(Platform::Darwin) => {}
+                Some(Platform::Linux) => {
+                    for (name, _) in &mut definitions {
+                        name.remove(0);
+                    }
+                }
+                None => {
+                    let plain: Vec<_> = definitions
+                        .iter()
+                        .map(|(name, range)| (name[1..].to_string(), range.clone()))
+                        .collect();
+                    definitions.extend(plain);
+                }
+            }
             IndexedFile {
                 text: Arc::from(text),
-                definitions: c_functions(text),
+                definitions,
                 references: Vec::new(),
                 calls: arm_lint::CallGraph::default(),
             }
         } else {
-            summarize(&Analysis::new(text))
+            let platform = configured
+                .or_else(|| Platform::detect(text))
+                .unwrap_or_default();
+            summarize(&Analysis::for_platform(text, platform))
         };
         self.files.insert(path.to_path_buf(), file);
     }
@@ -507,6 +533,37 @@ main(int argc, char **argv)
         assert_eq!(index.definitions("_draw", None).len(), 1);
         assert!(index.global_names().contains(&"_add2".to_string()));
         assert!(!is_c(Path::new("math.h")) && is_c(Path::new("view.m")));
+        // No configured platform: the Linux name too.
+        assert_eq!(index.definitions("add2", None).len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn files_are_indexed_for_their_platform() {
+        let root = project("platform");
+        std::fs::write(
+            root.join("armtool.toml"),
+            "[target]\nplatform = \"linux\"\n",
+        )
+        .expect("config");
+        // On Linux `;` separates, so `.globl helper` is its own statement.
+        std::fs::write(
+            root.join("src/main.s"),
+            "bl helper ; .globl helper\nhelper: ret\n",
+        )
+        .expect("write");
+        std::fs::write(
+            root.join("src/lib/math.c"),
+            "int add2(int a, int b) { return a + b; }\n",
+        )
+        .expect("write");
+        let index = Index::scan(std::slice::from_ref(&root));
+        assert_eq!(index.definitions("helper", None).len(), 1);
+        assert_eq!(index.definitions("add2", None).len(), 1);
+        assert!(
+            index.definitions("_add2", None).is_empty(),
+            "Linux C names have no underscore"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
