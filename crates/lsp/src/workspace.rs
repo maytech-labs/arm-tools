@@ -25,6 +25,8 @@ pub struct IndexedFile {
     pub definitions: Vec<(String, Range<usize>)>,
     /// Uses of names this file doesn't define, and of its global labels.
     pub references: Vec<(String, Range<usize>)>,
+    /// Functions and the calls they make, for call hierarchy.
+    pub calls: arm_lint::CallGraph,
 }
 
 #[derive(Debug, Default)]
@@ -76,6 +78,14 @@ impl Index {
 
     pub fn file(&self, path: &Path) -> Option<&IndexedFile> {
         self.files.get(path)
+    }
+
+    /// Every indexed file, in path order.
+    pub fn files(&self) -> Vec<(&Path, &IndexedFile)> {
+        let mut out: Vec<(&Path, &IndexedFile)> =
+            self.files.iter().map(|(p, f)| (p.as_path(), f)).collect();
+        out.sort_by_key(|(p, _)| *p);
+        out
     }
 
     /// Where a global label is defined, in any indexed file but `except`.
@@ -180,6 +190,7 @@ fn summarize(analysis: &Analysis) -> IndexedFile {
         text: Arc::from(analysis.text()),
         definitions,
         references,
+        calls: arm_lint::call_graph(analysis),
     }
 }
 
@@ -266,6 +277,10 @@ mod tests {
         let found: Vec<String> = index.search("HELP").into_iter().map(|(n, _)| n).collect();
         assert_eq!(found, ["_helper"]);
         assert_eq!(index.global_names(), ["_helper", "_main", "_shared"]);
+        let (path, main) = index.files()[1];
+        assert!(path.ends_with("src/main.s"));
+        let callees: Vec<&str> = main.calls.calls.iter().map(|c| c.callee.as_str()).collect();
+        assert_eq!(callees, ["_helper", "_printf"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 

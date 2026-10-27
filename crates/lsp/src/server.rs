@@ -12,6 +12,7 @@ use lsp_types::notification::{
     PublishDiagnostics,
 };
 use lsp_types::request::{
+    CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare,
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentLinkRequest,
     DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition, HoverRequest,
     InlayHintRequest, PrepareRenameRequest, References, Rename, Request as _,
@@ -151,6 +152,7 @@ fn capabilities(encoding: Encoding) -> ServerCapabilities {
         code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
         folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        call_hierarchy_provider: Some(lsp_types::CallHierarchyServerCapability::Simple(true)),
         document_link_provider: Some(lsp_types::DocumentLinkOptions {
             resolve_provider: Some(false),
             work_done_progress_options: lsp_types::WorkDoneProgressOptions::default(),
@@ -429,6 +431,32 @@ impl Server<'_> {
                         CompletionResponse::Array(items)
                     });
                 Ok(ok(id, result))
+            }
+            CallHierarchyPrepare::METHOD => {
+                let params: lsp_types::CallHierarchyPrepareParams = params(request)?;
+                let at = &params.text_document_position_params;
+                let result = self.at(at).and_then(|(doc, offset)| {
+                    let analysis = &doc.analysis;
+                    let name = match analysis.symbol_at(offset) {
+                        Some(symbol) => analysis.symbols()[symbol].name.clone(),
+                        None => analysis.reference_at(offset)?.name.clone(),
+                    };
+                    let here = file_path(&at.text_document.uri).map(|p| arm_sema::normalize(&p))?;
+                    let item = self.function_item(&here, &name).or_else(|| {
+                        let place = self.index.definitions(&name, None).into_iter().next()?;
+                        self.function_item(&place.path, &name)
+                    })?;
+                    Some(vec![item])
+                });
+                Ok(ok(id, result))
+            }
+            CallHierarchyIncomingCalls::METHOD => {
+                let params: lsp_types::CallHierarchyIncomingCallsParams = params(request)?;
+                Ok(ok(id, self.incoming_calls(&params.item)))
+            }
+            CallHierarchyOutgoingCalls::METHOD => {
+                let params: lsp_types::CallHierarchyOutgoingCallsParams = params(request)?;
+                Ok(ok(id, self.outgoing_calls(&params.item)))
             }
             DocumentLinkRequest::METHOD => {
                 let params: lsp_types::DocumentLinkParams = params(request)?;
@@ -783,6 +811,104 @@ impl Server<'_> {
         }
         let reference = analysis.reference_at(offset)?;
         reference.symbol.is_none().then(|| reference.name.clone())
+    }
+
+    /// A call hierarchy item for a function an indexed file defines.
+    fn function_item(&self, path: &Path, name: &str) -> Option<lsp_types::CallHierarchyItem> {
+        let file = self.index.file(path)?;
+        let function = &file.calls.functions[file.calls.function(name)?];
+        Some(lsp_types::CallHierarchyItem {
+            name: function.name.clone(),
+            kind: LspSymbolKind::FUNCTION,
+            tags: None,
+            detail: path.file_name().map(|n| n.to_string_lossy().into_owned()),
+            uri: path_uri(path)?,
+            range: self.range_in(&file.text, function.range.clone()),
+            selection_range: self.range_in(&file.text, function.name_range.clone()),
+            data: None,
+        })
+    }
+
+    /// The functions that call `item`, in this file or, for a global one, in
+    /// any file that doesn't define its own function of that name.
+    fn incoming_calls(
+        &self,
+        item: &lsp_types::CallHierarchyItem,
+    ) -> Option<Vec<lsp_types::CallHierarchyIncomingCall>> {
+        let home = arm_sema::normalize(&file_path(&item.uri)?);
+        let file = self.index.file(&home)?;
+        let exported = file.calls.functions[file.calls.function(&item.name)?].exported;
+        let mut out = Vec::new();
+        for (path, other) in self.index.files() {
+            let local = path == home;
+            if !local && (!exported || other.calls.function(&item.name).is_some()) {
+                continue;
+            }
+            let mut by_caller: Vec<(usize, Vec<lsp_types::Range>)> = Vec::new();
+            for call in other.calls.calls.iter().filter(|c| c.callee == item.name) {
+                let Some(caller) = call.caller else { continue };
+                let range = self.range_in(&other.text, call.range.clone());
+                match by_caller.iter_mut().find(|(c, _)| *c == caller) {
+                    Some((_, ranges)) => ranges.push(range),
+                    None => by_caller.push((caller, vec![range])),
+                }
+            }
+            for (caller, from_ranges) in by_caller {
+                let name = &other.calls.functions[caller].name;
+                if let Some(from) = self.function_item(path, name) {
+                    out.push(lsp_types::CallHierarchyIncomingCall { from, from_ranges });
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// What `item` calls. Names the project doesn't define, like `_printf`,
+    /// point at the call.
+    fn outgoing_calls(
+        &self,
+        item: &lsp_types::CallHierarchyItem,
+    ) -> Option<Vec<lsp_types::CallHierarchyOutgoingCall>> {
+        let home = arm_sema::normalize(&file_path(&item.uri)?);
+        let file = self.index.file(&home)?;
+        let caller = file.calls.function(&item.name)?;
+        let mut by_callee: Vec<(&str, Vec<Range<usize>>)> = Vec::new();
+        for call in file.calls.calls.iter().filter(|c| c.caller == Some(caller)) {
+            match by_callee.iter_mut().find(|(n, _)| *n == call.callee) {
+                Some((_, ranges)) => ranges.push(call.range.clone()),
+                None => by_callee.push((&call.callee, vec![call.range.clone()])),
+            }
+        }
+        let out = by_callee
+            .into_iter()
+            .filter_map(|(callee, ranges)| {
+                let to = self
+                    .function_item(&home, callee)
+                    .or_else(|| {
+                        let place = self.index.definitions(callee, None).into_iter().next()?;
+                        self.function_item(&place.path, callee)
+                    })
+                    .or_else(|| {
+                        let at = self.range_in(&file.text, ranges[0].clone());
+                        Some(lsp_types::CallHierarchyItem {
+                            name: callee.to_string(),
+                            kind: LspSymbolKind::FUNCTION,
+                            tags: None,
+                            detail: Some("not defined in the project".into()),
+                            uri: item.uri.clone(),
+                            range: at,
+                            selection_range: at,
+                            data: None,
+                        })
+                    })?;
+                let from_ranges = ranges
+                    .into_iter()
+                    .map(|r| self.range_in(&file.text, r))
+                    .collect();
+                Some(lsp_types::CallHierarchyOutgoingCall { to, from_ranges })
+            })
+            .collect();
+        Some(out)
     }
 
     /// The global label at `offset` if renaming it reaches other files: one

@@ -41,3 +41,4 @@
 - [0030 Signature help and completion from the operand forms](decisions/0030-operand-aware-editing.md)
 - [0031 Rename global labels across the project](decisions/0031-cross-file-rename.md)
 - [0032 Completion snippets for Apple's conventions](decisions/0032-snippets.md)
+- [0033 Call hierarchy from the control-flow graph's functions](decisions/0033-call-hierarchy.md)

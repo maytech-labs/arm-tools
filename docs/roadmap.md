@@ -71,6 +71,7 @@ Done when Neovim and VS Code show diagnostics, hover, definition, references, co
 - [x] Rename global labels across files ([0031](decisions/0031-cross-file-rename.md))
 - [x] Document links for `.include` and, in `.S` files, `#include`
 - [x] Snippets: functions, frame records, `@PAGE` addressing, system calls ([0032](decisions/0032-snippets.md))
+- [x] Call hierarchy, across files ([0033](decisions/0033-call-hierarchy.md))
 - [x] `editors/` setup for Neovim and Helix, `make install`, and `cargo xtask nvim-smoke`
 
 ## M5: linter

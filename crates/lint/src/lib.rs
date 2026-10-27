@@ -2,6 +2,7 @@
 //! work from `arm_sema::Analysis`: its items, operands, and symbols. They run
 //! in `armls` as diagnostics and in `armtool lint` for CI.
 
+mod calls;
 mod check;
 mod config;
 mod flow;
@@ -12,6 +13,7 @@ use std::collections::HashMap;
 use arm_sema::{Analysis, Diagnostic, Encoding, Severity};
 use arm_syntax::SyntaxKind;
 
+pub use calls::{Call, CallGraph, FunctionSpan, call_graph};
 pub use check::{Checked, check};
 pub use config::{Config, Level};
 

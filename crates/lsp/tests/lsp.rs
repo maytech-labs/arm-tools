@@ -254,6 +254,7 @@ fn advertises_capabilities_and_negotiates_encoding() {
         "workspaceSymbolProvider",
         "signatureHelpProvider",
         "documentLinkProvider",
+        "callHierarchyProvider",
     ] {
         assert!(!caps[capability].is_null(), "missing {capability}");
     }
@@ -699,6 +700,97 @@ fn navigation_between_linked_files() {
     let at_helper = json!({ "textDocument": { "uri": main_uri }, "position": start(3, 9) });
     let gone = client.request("textDocument/definition", at_helper)["result"].clone();
     assert!(gone.is_null(), "{gone}");
+    assert!(client.shutdown().success());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn call_hierarchy_across_files() {
+    let root = std::env::temp_dir().join(format!("armls-calls-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("dir");
+    let main = ".globl _main\n_main:\n    bl _helper\n    bl _printf\n    bl _helper\n    ret\n";
+    let util = ".globl _helper\n_helper:\n    bl step\n    ret\nstep:\n    ret\n";
+    // Its own static _helper: its calls aren't calls to util.s's.
+    let other = "_helper:\n    ret\n.globl _other\n_other:\n    bl _helper\n    ret\n";
+    for (name, text) in [("main.s", main), ("util.s", util), ("other.s", other)] {
+        std::fs::write(root.join(name), text).expect("write");
+    }
+    let root_uri = format!("file://{}", root.display());
+    let main_uri = format!("{root_uri}/main.s");
+    let util_uri = format!("{root_uri}/util.s");
+    let mut client = Client::start_in(true, Some(&root_uri));
+    client.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": main_uri, "languageId": "asm", "version": 1, "text": main } }),
+    );
+
+    // Prepare on the call lands on util.s's function.
+    let items = client.request(
+        "textDocument/prepareCallHierarchy",
+        json!({ "textDocument": { "uri": main_uri }, "position": start(2, 9) }),
+    )["result"]
+        .clone();
+    let helper = items[0].clone();
+    assert_eq!(helper["name"], "_helper");
+    assert_eq!(helper["uri"], util_uri.as_str());
+    assert_eq!(helper["selectionRange"]["start"], start(1, 0));
+
+    let incoming =
+        client.request("callHierarchy/incomingCalls", json!({ "item": helper }))["result"].clone();
+    let callers: Vec<(&str, usize)> = incoming
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|c| {
+            (
+                c["from"]["name"].as_str().unwrap_or_default(),
+                c["fromRanges"].as_array().map_or(0, Vec::len),
+            )
+        })
+        .collect();
+    assert_eq!(callers, [("_main", 2)], "{incoming}");
+
+    let outgoing =
+        client.request("callHierarchy/outgoingCalls", json!({ "item": helper }))["result"].clone();
+    assert_eq!(outgoing[0]["to"]["name"], "step");
+
+    // From _main: _helper in util.s, and _printf, which nothing defines.
+    let items = client.request(
+        "textDocument/prepareCallHierarchy",
+        json!({ "textDocument": { "uri": main_uri }, "position": start(1, 1) }),
+    )["result"]
+        .clone();
+    let outgoing =
+        client.request("callHierarchy/outgoingCalls", json!({ "item": items[0] }))["result"]
+            .clone();
+    let callees: Vec<(&str, &str)> = outgoing
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|c| {
+            (
+                c["to"]["name"].as_str().unwrap_or_default(),
+                c["to"]["detail"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        callees,
+        [
+            ("_helper", "util.s"),
+            ("_printf", "not defined in the project")
+        ]
+    );
+    assert_eq!(outgoing[0]["fromRanges"].as_array().map_or(0, Vec::len), 2);
+
+    // Nothing to prepare on a mnemonic.
+    let none = client.request(
+        "textDocument/prepareCallHierarchy",
+        json!({ "textDocument": { "uri": main_uri }, "position": start(5, 5) }),
+    )["result"]
+        .clone();
+    assert!(none.is_null(), "{none}");
     assert!(client.shutdown().success());
     let _ = std::fs::remove_dir_all(&root);
 }
