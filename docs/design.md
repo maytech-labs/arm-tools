@@ -121,13 +121,13 @@ Rules in the `flow` group need a control-flow graph, built per function from lab
 
 ## Language server
 
-**Status:** v1 done (2026-10-26): diagnostics, hover, completion, definition, references, highlight, rename, symbols, semantic tokens ([0016](decisions/0016-armls-v1.md)). Since then: folding, inlay hints, code actions, formatting, navigation between files ([0029](decisions/0029-workspace-index.md)), and signature help with operand-aware completion ([0030](decisions/0030-operand-aware-editing.md)).
+**Status:** Done for the first release (2026-10-27). v1 had diagnostics, hover, completion, definition, references, highlight, rename, symbols, and semantic tokens ([0016](decisions/0016-armls-v1.md)). Since then: folding, inlay hints, code actions, formatting, navigation between files ([0029](decisions/0029-workspace-index.md)), signature help with operand-aware completion ([0030](decisions/0030-operand-aware-editing.md)), rename across files ([0031](decisions/0031-cross-file-rename.md)), snippets ([0032](decisions/0032-snippets.md)), call hierarchy ([0033](decisions/0033-call-hierarchy.md)), C function definitions ([0034](decisions/0034-c-functions.md)), instruction descriptions ([0036](decisions/0036-instruction-descriptions.md)), and checking of the aliases clang handles in C++ ([0037](decisions/0037-cpp-aliases.md)). It survives a fuzzed edit session and answers its own bugs with errors instead of exiting; [0035](decisions/0035-performance.md) has the timings.
 
-`armls` speaks LSP over stdio, built on `lsp-server` and `lsp-types` ([0009](decisions/0009-lsp-library.md)). It reparses a whole file on each change: assembly files are small, and a full reparse of a 10,000 line file should take under 5 ms. Incremental parsing waits until measurements say it's needed.
+`armls` speaks LSP over stdio, built on `lsp-server` and `lsp-types` ([0009](decisions/0009-lsp-library.md)). It reanalyzes a whole file on each change: on 10,000 lines that's about 35 ms with lint, and queued changes coalesce ([0035](decisions/0035-performance.md)). Incremental parsing waits until measurements say it's needed.
 
 It negotiates UTF-8 position encoding when the client supports it, and converts to UTF-16 otherwise.
 
-Features, in order: diagnostics, document symbols, hover, go to definition and references, completion (mnemonics, registers, directives, symbols), semantic tokens, rename, folding ranges, inlay hints (resolved immediates, `@PAGE` addresses), code actions from lint fixes, and formatting.
+Features: diagnostics; hover; completion that follows each instruction's forms, with snippets; signature help; go to definition, references, rename, workspace symbols, and call hierarchy, across the project's assembly and C files; document symbols, highlight, and semantic tokens; folding; inlay hints for constant values and syscall names; quick fixes from lint; formatting; and document links for includes.
 
 ## Command line
 

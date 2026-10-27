@@ -59,6 +59,9 @@ Shipped early, before operand checking ([0016](decisions/0016-armls-v1.md)).
 
 Done when Neovim and VS Code show diagnostics, hover, definition, references, completion, symbols, and semantic tokens on the corpus, with no panics under a fuzzed edit session.
 
+- [x] A fuzzed edit session with no panics (`crates/lsp/src/fuzz.rs`), and a panic guard for what it misses
+- [x] Performance measured and fixed on large files and projects ([0035](decisions/0035-performance.md))
+
 - [x] Server loop, document store, position encoding
 - [x] Diagnostics, hover, definition, references, symbols
 - [x] Completion, semantic tokens

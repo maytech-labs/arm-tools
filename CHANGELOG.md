@@ -59,3 +59,4 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Hover and completion say what about 270 common instructions do.
 - Operand checking, signature help, and completion for `ubfx`, `bfi`, `bfc` and the other bitfield aliases, `lsl` by an immediate, and `dc`, `ic`, `at`, and `tlbi`.
 - `cargo xtask nvim-smoke` checks completion, signature help, call hierarchy, inlay hints, document links, formatting, and rename across files in real Neovim.
+- Docs: README, design, and examples describe the finished language server.

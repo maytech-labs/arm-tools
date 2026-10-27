@@ -10,17 +10,17 @@ make fib          # or one at a time, into build/
 
 | Program | Shows | Try in the editor |
 |---|---|---|
-| [hello](hello/hello.s) | Raw Darwin system calls: `write` and `exit` through `svc #0x80` with the number in x16, and `adrp` + `@PAGEOFF` to load an address | Inlay hints show `syscall write`; hover `x16` |
+| [hello](hello/hello.s) | Raw Darwin system calls: `write` and `exit` through `svc #0x80` with the number in x16, and `adrp` + `@PAGEOFF` to load an address | Inlay hints show `syscall write`; hover `x16`; on a new line, the `write` and `exit` snippets write these for you |
 | [sum](sum/sum.s) | Calling `printf`. On Apple silicon, variadic arguments go on the stack, not in x1 | Hover `_printf`'s format, `str`, and `sp`; go to definition on `sum` |
 | [fib](fib/fib.s) | Recursion: frame records, and callee-saved x19 and x20 kept across calls | Hover `x19` for its ABI role; delete the `stp x19, x20` to see `abi/callee-saved` |
-| [neon](neon/vecadd.s) | NEON: `ld1`, `fadd` on four floats at once, `st1` | Hover `fadd` for its forms; change `.4s` to `.8h` in one operand |
+| [neon](neon/vecadd.s) | NEON: `ld1`, `fadd` on four floats at once, `st1` | Hover `fadd` for what it does and its forms; retype `fadd v0.4s, ` to see signature help and only vector registers offered; change `.4s` to `.8h` in one operand |
 | [macros](macros/main.s) | `.include`, macros with default arguments, `.irp`, `.rept` | Go to definition on `print` jumps to [syscalls.s](macros/syscalls.s); break the macro body and the error appears at the call |
 | [preprocessor](preprocessor/strlen.S) | A `.S` file: `#include`, `#define`, a function-like macro, `#if` | Errors map back through the preprocessor; set `VERBOSE` to 0 |
-| [linked](linked/main.s) | A program in two files, assembled separately and linked: calls go both ways between them | `gd` on `_print_line` jumps to [text.s](linked/text.s); `grr` lists uses in both files; hover shows where it's defined |
+| [linked](linked/main.s) | A program in two files, assembled separately and linked: calls go both ways between them | `gd` on `_print_line` jumps to [text.s](linked/text.s); `grr` lists uses in both files; `grn` renames it in both; `:lua vim.lsp.buf.incoming_calls()` shows its callers |
 | [strings](strings/upper.s) | Byte loads and stores (`ldrb`, `strb`), editing a string in place, writable data in `__DATA` | Hover `ldrb` and `strb` |
 | [sort](sort/sort.s) | Insertion sort: nested loops, signed comparisons, `[x0, x2, lsl #3]` indexing | Hover `b.le`; references on `sort` |
 | [jumptable](jumptable/switch.s) | A `switch` as a jump table of offsets and `br`; strings kept near code for `adr` | Labels named `s0` to `s6` look like registers: `adr` reads them as labels, a branch wouldn't |
-| [bits](bits/bits.s) | `movz`/`movk` to build a constant, `clz`, `rbit`, and popcount with NEON `cnt` and `addv` | Hover `cnt` and `addv` for their forms |
+| [bits](bits/bits.s) | `movz`/`movk` to build a constant, `clz`, `rbit`, and popcount with NEON `cnt` and `addv` | Hover `cnt` and `addv`; add `ubfx x1, x0, #60, #8` to see clang's bitfield check |
 | [atomics](atomics/atomics.s) | LSE atomics: `ldaddal` and compare-and-swap (`casal`) | Hover shows they need `lse`; add `.arch armv8-a` at the top to see the error when it's off |
 | [c-interop](c-interop/dot.s) | C calling assembly and assembly calling C: arguments in x0 to x2, a double result in d0, d8 kept across calls | `gd` on `_report` jumps to `report` in [main.c](c-interop/main.c); `K` shows its C signature |
 | [echo](echo/echo.s) | stdin to stdout with the `read` and `write` syscalls; Darwin's carry flag on error | Inlay hints name `read` and `write`; try `echo hi \| ./build/echo` |
