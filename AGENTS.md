@@ -83,9 +83,9 @@ Plain, direct, and concrete, in docs, comments, diagnostics, and commit messages
 
 To release, on `main` with CI green ([0044](docs/decisions/0044-releases.md)):
 
-1. Set the version in `Cargo.toml` (and `editors/vscode/package.json`), and rename `CHANGELOG.md`'s **Unreleased** section to `X.Y.Z - YYYY-MM-DD`, adding a fresh empty **Unreleased** above it.
-2. Commit as `chore: release X.Y.Z`, then tag and push: `git tag vX.Y.Z && git push upstream main vX.Y.Z`.
-3. `.github/workflows/release.yml` builds the binaries and publishes the release with the changelog section as notes.
+1. Tag `main`'s latest commit and push the tag: `git tag vX.Y.Z && git push upstream vX.Y.Z`. **Unreleased** in `CHANGELOG.md` must have entries.
+2. `.github/workflows/release.yml`'s `prepare` job sets the version in `Cargo.toml`, `Cargo.lock`, and `editors/vscode/package.json`, renames **Unreleased** to `X.Y.Z - YYYY-MM-DD` under a fresh empty one, commits that to `main` as `chore: release X.Y.Z`, and moves the tag onto it ([0049](docs/decisions/0049-release-from-a-tag.md)).
+3. The same workflow builds the binaries and publishes the release with the changelog section as notes.
 4. The same workflow's `homebrew` job points the formula in [maytech-labs/homebrew-tap](https://github.com/maytech-labs/homebrew-tap) at the new macOS archive ([0047](docs/decisions/0047-org-homebrew-tap.md)). If it fails, usually because `HOMEBREW_TAP_TOKEN` expired, update `url`, `version`, and `sha256` there by hand.
 
 ## Commits and pull requests
