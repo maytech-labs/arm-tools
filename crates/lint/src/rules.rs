@@ -68,13 +68,13 @@ pub(crate) const RULES: &[RuleInfo] = &[
         id: "flow/fallthrough",
         default_level: Level::Warning,
         summary: "A function's last instruction falls into the next function",
-        explanation: "The function doesn't end with ret or a branch, so it keeps running into whatever comes next. End it with ret, or a branch if that's intended.",
+        explanation: "The function doesn't end with ret, a branch, or a call that never returns (exit, abort, or a function in the file that only ends in one), so it keeps running into whatever comes next. End it with ret, or a branch if that's intended. A macro call after the last instruction isn't judged.",
     },
     RuleInfo {
         id: "flow/unbalanced-stack",
         default_level: Level::Warning,
         summary: "Returns with sp at a different place than on entry",
-        explanation: "Along some path, the function moves sp and doesn't move it back before ret or a tail call, so the caller's stack is corrupted. Every push needs a matching pop on every path.",
+        explanation: "Along some path, the function moves sp and doesn't move it back before ret or a tail call, so the caller's stack is corrupted. Every push needs a matching pop on every path. A br through a register, like a jump table's, is taken to stay inside the function.",
     },
     RuleInfo {
         id: "flow/undefined-register",
@@ -420,11 +420,18 @@ fn unused_labels(analysis: &Analysis, out: &mut Vec<Finding>) {
 }
 
 fn fallthrough(cfg: &Cfg, function: &Function, out: &mut Vec<Finding>) {
-    let Some(last) = function.span.clone().last().map(|i| cfg.insns[i]) else {
+    let Some(i) = function.span.clone().last() else {
         return;
     };
+    let last = cfg.insns[i];
     // A final `svc` is how a program ends: the exit syscall doesn't return.
-    if flow::is_terminator(last) || last.mnemonic.head == "svc" || last.operands.is_none() {
+    // Nor does a call to exit, and a macro call after the last instruction,
+    // like an epilogue, may end with ret.
+    if flow::is_terminator(last)
+        || last.mnemonic.head == "svc"
+        || cfg.never_returns(i)
+        || cfg.is_opaque(i)
+    {
         return;
     }
     let message = match &function.next {
@@ -1144,7 +1151,14 @@ fn unbalanced_stack(
             _ => Delta::Unknown,
         };
         let successors = cfg.successors(analysis, i);
+        // A br through a register with the frame still up is a jump table
+        // or computed goto inside the function, not a way out of it.
+        let indirect = matches!(
+            insn.mnemonic.head.as_str(),
+            "br" | "braa" | "brab" | "braaz" | "brabz"
+        );
         if successors.exits
+            && !indirect
             && let Delta::Known(d) = merged
             && d != 0
         {
@@ -1269,6 +1283,81 @@ _main:
     }
 
     #[test]
+    fn fallthrough_after_noreturn_calls() {
+        // _die ends in exit, so it never returns, and neither does a call
+        // to it at the end of _main.
+        let text = "\
+.globl _main
+_die:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    mov w0, #1
+    bl _exit
+_main:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    cbz x0, 1f
+    ldp x29, x30, [sp], #16
+    ret
+1:
+    bl _die
+";
+        assert!(rules(text).is_empty(), "{:?}", findings(text));
+        // A function that can return still falls through.
+        let returns = "\
+.globl _main, _maybe
+_maybe:
+    cbz x0, 1f
+    bl _exit
+1:
+    mov x0, #1
+_main:
+    ret
+";
+        assert_eq!(rules(returns), ["flow/fallthrough"]);
+    }
+
+    #[test]
+    fn fallthrough_into_a_macro() {
+        let text = "\
+.macro EPILOGUE
+    ldp x29, x30, [sp], #16
+    ret
+.endm
+.globl _a, _b
+_a:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    EPILOGUE
+_b:
+    ret
+";
+        assert!(rules(text).is_empty(), "{:?}", findings(text));
+    }
+
+    #[test]
+    fn macro_calls_forget_register_types() {
+        // x0 is an i32 on entry, but the macro loads an address into it.
+        let text = "\
+; armtool: fn _f(x0: i32)
+.macro ADDR reg, sym
+    adr \\reg, \\sym
+.endm
+.globl _f
+_f:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    ADDR x0, msg
+    bl _puts
+    ldp x29, x30, [sp], #16
+    ret
+msg:
+    .asciz \"hi\"
+";
+        assert!(rules(text).is_empty(), "{:?}", findings(text));
+    }
+
+    #[test]
     fn calls_need_lr_and_fp() {
         let text = ".globl _f\n_f:\n  bl _g\n  ret\n";
         assert_eq!(rules(text), ["abi/frame-pointer", "abi/link-register"]);
@@ -1323,6 +1412,19 @@ _main:
         // mov sp, x29 is a restore we don't follow: no guess.
         let restore = ".globl _f\n_f:\n  sub sp, sp, #16\n  mov sp, x29\n  ret\n";
         assert!(rules(restore).is_empty());
+        // A jump table's br stays inside the function.
+        let table = "\
+.globl _f
+_f:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    adr x9, 1f
+    br x9
+1:
+    ldp x29, x30, [sp], #16
+    ret
+";
+        assert!(rules(table).is_empty(), "{:?}", findings(table));
     }
 
     /// Applies a finding's fix to the text.

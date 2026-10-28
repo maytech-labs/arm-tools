@@ -107,6 +107,12 @@ fn findings(
             externals.signatures.extend(project.signatures);
             externals.structs = project.structs;
         }
+        // C beside the file wins over C elsewhere in the project.
+        if let Some(dir) = path.and_then(Path::parent) {
+            let nearby = crate::cdecl::nearby(dir, platform);
+            externals.signatures.extend(nearby.signatures);
+            externals.structs.extend(nearby.structs);
+        }
         out.extend(crate::lint_with(analysis, config, &externals));
     }
     out.sort_by_key(|d| (d.range.start, d.range.end));

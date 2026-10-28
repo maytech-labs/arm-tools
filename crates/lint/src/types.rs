@@ -533,13 +533,18 @@ fn access_size(insn: &Instruction) -> Option<u8> {
     })
 }
 
-/// The type a load gives its register, from the pointee: `ldrsw` widens an
-/// i32 to i64.
+/// The type a load gives its register, from the pointee: `ldrsw`, `ldrsb`,
+/// and `ldrsh` sign-extend it to the whole register, and `ldrb` and `ldrh`
+/// zero-extend it, so an i8 loaded with `ldrb` is a u8.
 fn loaded(insn: &Instruction, pointee: &Ty) -> Ty {
     match (insn.mnemonic.head.as_str(), pointee) {
-        ("ldrsw" | "ldpsw", Ty::Int { .. }) => Ty::Int {
+        ("ldrsw" | "ldpsw" | "ldrsb" | "ldrsh" | "ldursb" | "ldursh", Ty::Int { .. }) => Ty::Int {
             signed: true,
             bits: 64,
+        },
+        ("ldrb" | "ldrh" | "ldurb" | "ldurh", Ty::Int { bits, .. }) => Ty::Int {
+            signed: false,
+            bits: *bits,
         },
         _ => pointee.clone(),
     }
@@ -842,6 +847,12 @@ impl Checker<'_> {
             && state.addresses.get(&base) == Some(&format!("@{name}"))
         {
             out.addresses.insert(id.clone(), name);
+        }
+        // Code we can't see, like a macro call, may write any register.
+        if self.cfg.is_opaque(i) {
+            out.types.clear();
+            out.addresses.clear();
+            out.flags = None;
         }
         for (register, ty) in self.after.get(&i).into_iter().flatten() {
             out.types.insert(register.clone(), ty.clone());
@@ -2022,6 +2033,34 @@ _f:
         assert_eq!(
             known.get("x19").map(|t| t.to_string()).as_deref(),
             Some("ptr<u8>")
+        );
+    }
+
+    #[test]
+    fn narrow_loads_extend() {
+        // ldrb zero-extends a char into an int; ldrsb sign-extends it.
+        let text = "\
+; armtool: fn _putchar(x0: i32) -> i32
+; armtool: fn _f(x0: ptr<i8>)
+.globl _f
+_f:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+    mov     x9, x0
+    ldrb    w0, [x9]
+    bl      _putchar
+    ldrsb   w0, [x9]
+    bl      _putchar
+    ldp     x29, x30, [sp], #16
+    ret
+";
+        assert!(types(text).is_empty(), "{:?}", types(text));
+        let analysis = Analysis::new(text);
+        let at = text.find("bl      _putchar").expect("bl");
+        let known = types_at(&analysis, at).expect("types");
+        assert_eq!(
+            known.get("x0").map(ToString::to_string).as_deref(),
+            Some("u8")
         );
     }
 

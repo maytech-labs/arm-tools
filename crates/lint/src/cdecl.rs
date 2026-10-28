@@ -611,6 +611,27 @@ pub fn project(root: &Path, platform: Platform) -> CDefinitions {
     found
 }
 
+/// Functions and structs from the C files in one directory, not below it:
+/// the C an assembly file is most likely built with, which wins over the
+/// rest of the project.
+pub fn nearby(dir: &Path, platform: Platform) -> CDefinitions {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return CDefinitions::default();
+    };
+    let texts: Vec<String> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| is_c(p))
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect();
+    definitions(&texts, platform)
+}
+
+fn is_c(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e == "h" || e == "c" || e == "m")
+}
+
 /// Functions and structs from C texts: structs and typedefs first, so
 /// prototypes can name them.
 fn definitions(texts: &[String], platform: Platform) -> CDefinitions {
@@ -620,14 +641,24 @@ fn definitions(texts: &[String], platform: Platform) -> CDefinitions {
         .filter_map(|s| Some((s.alias.clone()?, s.name.clone())))
         .collect();
     let structs = layouts(&found, &aliases);
-    let mut signatures = HashMap::new();
+    let mut signatures: HashMap<String, Signature> = HashMap::new();
+    // Two programs in one tree can declare the same name differently.
+    // Neither can be trusted, so the name goes unchecked.
+    let mut conflicting = std::collections::HashSet::new();
     for text in texts {
         for signature in prototypes_with(text, platform, &aliases) {
-            signatures
-                .entry(signature.name.clone())
-                .or_insert(signature);
+            match signatures.get(&signature.name) {
+                Some(seen) if *seen != signature => {
+                    conflicting.insert(signature.name.clone());
+                }
+                Some(_) => {}
+                None => {
+                    signatures.insert(signature.name.clone(), signature);
+                }
+            }
         }
     }
+    signatures.retain(|name, _| !conflicting.contains(name));
     CDefinitions {
         signatures,
         structs,
@@ -656,10 +687,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
             {
                 walk(&path, out);
             }
-        } else if path
-            .extension()
-            .is_some_and(|e| e == "h" || e == "c" || e == "m")
-        {
+        } else if is_c(&path) {
             out.push(path);
         }
     }
@@ -795,6 +823,31 @@ long sum(struct point p);
             Some("ptr<node>")
         );
         assert!(!defs.signatures.contains_key("sum"));
+    }
+
+    #[test]
+    fn conflicting_prototypes_are_dropped() {
+        let texts = [
+            "long sum(const long *a, long n);\nint twice(int x);".to_string(),
+            "long sum(const int *a, long n);\nint twice(int y);".to_string(),
+        ];
+        let defs = definitions(&texts, Platform::Linux);
+        assert!(!defs.signatures.contains_key("sum"));
+        // The same signature twice, parameter names aside, is no conflict.
+        assert!(defs.signatures.contains_key("twice"));
+    }
+
+    #[test]
+    fn nearby_reads_one_directory() {
+        let dir = std::env::temp_dir().join(format!("armtool-nearby-{}", std::process::id()));
+        let below = dir.join("sub");
+        std::fs::create_dir_all(&below).expect("temp dir");
+        std::fs::write(dir.join("main.c"), "long sum(const long *a, long n);").expect("write");
+        std::fs::write(below.join("other.c"), "int other(int x);").expect("write");
+        let defs = nearby(&dir, Platform::Linux);
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(defs.signatures.contains_key("sum"));
+        assert!(!defs.signatures.contains_key("other"));
     }
 
     #[test]

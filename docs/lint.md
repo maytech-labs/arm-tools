@@ -135,7 +135,7 @@ Default level: warning.
 
 A function's last instruction falls into the next function
 
-The function doesn't end with ret or a branch, so it keeps running into whatever comes next. End it with ret, or a branch if that's intended.
+The function doesn't end with ret, a branch, or a call that never returns (exit, abort, or a function in the file that only ends in one), so it keeps running into whatever comes next. End it with ret, or a branch if that's intended. A macro call after the last instruction isn't judged.
 
 Default level: warning.
 
@@ -143,7 +143,7 @@ Default level: warning.
 
 Returns with sp at a different place than on entry
 
-Along some path, the function moves sp and doesn't move it back before ret or a tail call, so the caller's stack is corrupted. Every push needs a matching pop on every path.
+Along some path, the function moves sp and doesn't move it back before ret or a tail call, so the caller's stack is corrupted. Every push needs a matching pop on every path. A br through a register, like a jump table's, is taken to stay inside the function.
 
 Default level: warning.
 

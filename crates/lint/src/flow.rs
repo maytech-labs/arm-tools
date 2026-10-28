@@ -36,8 +36,32 @@ pub(crate) struct Cfg<'a> {
     /// Whether code we can't see (a macro call) or operands we couldn't read
     /// sit at or right after instruction i.
     opaque: Vec<bool>,
+    /// Whether instruction i calls a function that never returns: `exit`
+    /// and the like, or one in this file that only ends that way.
+    noreturn: Vec<bool>,
     pub functions: Vec<Function>,
 }
+
+/// C library functions that never return, without Darwin's underscore.
+const NORETURN: &[&str] = &[
+    "exit",
+    "_exit",
+    "_Exit",
+    "quick_exit",
+    "abort",
+    "longjmp",
+    "_longjmp",
+    "siglongjmp",
+    "pthread_exit",
+    "err",
+    "errx",
+    "verr",
+    "verrx",
+    "__assert_fail",
+    "__assert_rtn",
+    "__stack_chk_fail",
+    "__cxa_throw",
+];
 
 /// Where control goes after an instruction.
 pub(crate) struct Successors {
@@ -66,6 +90,7 @@ impl<'a> Cfg<'a> {
             function_at: HashSet::new(),
             falls: Vec::new(),
             opaque: Vec::new(),
+            noreturn: Vec::new(),
             functions: Vec::new(),
         };
         let mut in_text = true;
@@ -134,7 +159,81 @@ impl<'a> Cfg<'a> {
             *last |= opaque;
         }
         close(&mut cfg, &mut open, None);
+        cfg.find_noreturn(analysis);
         cfg
+    }
+
+    /// Marks calls that never return: to the C library's, then, until
+    /// nothing changes, to this file's functions that only end in one.
+    fn find_noreturn(&mut self, analysis: &Analysis) {
+        let darwin = analysis.platform() == arm_isa::Platform::Darwin;
+        self.noreturn = self
+            .insns
+            .iter()
+            .map(|insn| {
+                insn.mnemonic.head == "bl"
+                    && callee_name(analysis, insn).is_some_and(|name| {
+                        let name = if darwin {
+                            name.strip_prefix('_').unwrap_or(&name)
+                        } else {
+                            &name
+                        };
+                        NORETURN.contains(&name)
+                    })
+            })
+            .collect();
+        loop {
+            let mut ending: HashSet<usize> = HashSet::new();
+            for function in &self.functions {
+                let Some(entry) = function.entry else {
+                    continue;
+                };
+                if self.never_ends(analysis, entry) {
+                    ending.insert(entry);
+                }
+            }
+            let mut changed = false;
+            for i in 0..self.insns.len() {
+                let insn = self.insns[i];
+                let calls_ending = insn.mnemonic.head == "bl"
+                    && target(analysis, insn)
+                        .and_then(|s| self.label_at.get(&s))
+                        .is_some_and(|t| ending.contains(t));
+                if calls_ending && !self.noreturn[i] {
+                    self.noreturn[i] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// Whether every path from `entry` ends in a call that never returns, or
+    /// a trap, and none returns, branches out, or reaches code we can't see.
+    fn never_ends(&self, analysis: &Analysis, entry: usize) -> bool {
+        let (reached, opaque) = self.reachable(analysis, entry);
+        !opaque
+            && reached.iter().all(|&i| {
+                let successors = self.successors(analysis, i);
+                let insn = self.insns[i];
+                !successors.exits
+                    && (!successors.next.is_empty()
+                        || self.noreturn[i]
+                        || matches!(insn.mnemonic.head.as_str(), "brk" | "udf" | "hlt"))
+            })
+    }
+
+    /// Whether instruction i calls a function that never returns.
+    pub fn never_returns(&self, i: usize) -> bool {
+        self.noreturn.get(i).copied().unwrap_or(false)
+    }
+
+    /// Whether code we can't see, like a macro call, sits at or right after
+    /// instruction i.
+    pub fn is_opaque(&self, i: usize) -> bool {
+        self.opaque.get(i).copied().unwrap_or(false)
     }
 
     pub fn successors(&self, analysis: &Analysis, i: usize) -> Successors {
@@ -143,6 +242,12 @@ impl<'a> Cfg<'a> {
         let local = target(analysis, insn)
             .and_then(|s| self.label_at.get(&s).copied())
             .filter(|t| !self.function_at.contains(t) && *t < self.insns.len());
+        if self.never_returns(i) {
+            return Successors {
+                next: Vec::new(),
+                exits: false,
+            };
+        }
         let fall = self.falls[i].then_some(i + 1);
         let unconditional_branch = head == "b" && insn.mnemonic.condition.is_none();
         if unconditional_branch {
@@ -284,6 +389,12 @@ pub(crate) fn is_call(insn: &Instruction) -> bool {
 pub(crate) fn target(analysis: &Analysis, insn: &Instruction) -> Option<usize> {
     let range = insn.operand_ranges.last()?;
     analysis.reference_at(range.start)?.symbol
+}
+
+/// The name a branch or call goes to, defined in this file or not.
+fn callee_name(analysis: &Analysis, insn: &Instruction) -> Option<String> {
+    let range = insn.operand_ranges.last()?;
+    Some(analysis.reference_at(range.start)?.name.clone())
 }
 
 /// A general-purpose or SIMD register's identity, ignoring width: `x19` for

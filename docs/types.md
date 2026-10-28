@@ -81,7 +81,8 @@ node_size = 32
 
 You don't have to annotate functions written in C ([0040](decisions/0040-c-signatures.md)). Calls are checked against:
 
-- prototypes and definitions in the project's `.h`, `.c`, and `.m` files, where the project is the directory with `armtool.toml`, or the nearest one with `.git`;
+- prototypes and definitions in the `.h`, `.c`, and `.m` files beside the assembly file;
+- then those in the rest of the project, where the project is the directory with `armtool.toml`, or the nearest one with `.git`. A name the project declares two different ways isn't checked ([0048](decisions/0048-fewer-false-positives.md));
 - about 40 common C library functions: printf and friends, the string and memory functions, malloc and free, and some math.
 
 `long area(long w, long h);` in a header becomes `_area(x0: i64, x1: i64) -> i64` (`area` on Linux). An annotation in the file wins over both.

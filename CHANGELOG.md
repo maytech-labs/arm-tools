@@ -4,6 +4,13 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## Unreleased
 
+### Linting
+
+- `flow/fallthrough` accepts a function that ends in a call that never returns: `exit`, `abort`, and the like, or a function in the file that only ends in one. It no longer judges a function whose last instruction is followed by a macro call ([0048](docs/decisions/0048-fewer-false-positives.md)).
+- `flow/unbalanced-stack` no longer reports a jump table's `br`.
+- Types: a macro call forgets what's known about registers, and `ldrb` and `ldrh` zero-extend, so a `char` loaded with `ldrb` can go to `putchar`.
+- C files beside the assembly file win over the rest of the project, and a name the project declares two ways isn't checked against either.
+
 ### Project
 
 - `brew install arm-tools` installs the release's prebuilt binaries, without building Rust or LLVM. `--HEAD` still builds `main`.
