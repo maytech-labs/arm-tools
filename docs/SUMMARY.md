@@ -62,3 +62,4 @@
   - [0043 Catching more of clang's errors: SME arrays, system registers, and movprfx](decisions/0043-recall.md)
   - [0044 Releases: tagged builds with prebuilt binaries](decisions/0044-releases.md)
   - [0045 License under REAL 1.0](decisions/0045-real-license.md)
+  - [0046 Homebrew installs the release binaries](decisions/0046-homebrew-binaries.md)

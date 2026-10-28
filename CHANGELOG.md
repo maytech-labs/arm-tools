@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## Unreleased
 
+### Project
+
+- `brew install arm-tools` installs the release's prebuilt binaries, without building Rust or LLVM. `--HEAD` still builds `main`.
+
 ## 0.1.0 - 2026-10-27
 
 The first release: a language server, linter, and formatter for AArch64 assembly on macOS and Linux, checked against clang.
