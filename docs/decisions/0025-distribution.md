@@ -1,6 +1,6 @@
 # 0025. Distribution: a Homebrew formula in this repo, and a thin VS Code extension
 
-- **Status:** Accepted
+- **Status:** Accepted; tap superseded by [0047](0047-org-homebrew-tap.md)
 - **Date:** 2026-10-26
 
 ## Context

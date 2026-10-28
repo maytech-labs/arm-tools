@@ -86,7 +86,7 @@ To release, on `main` with CI green ([0044](docs/decisions/0044-releases.md)):
 1. Set the version in `Cargo.toml` (and `editors/vscode/package.json`), and rename `CHANGELOG.md`'s **Unreleased** section to `X.Y.Z - YYYY-MM-DD`, adding a fresh empty **Unreleased** above it.
 2. Commit as `chore: release X.Y.Z`, then tag and push: `git tag vX.Y.Z && git push upstream main vX.Y.Z`.
 3. `.github/workflows/release.yml` builds the binaries and publishes the release with the changelog section as notes.
-4. Point `Formula/arm-tools.rb` at the new macOS archive: update `url`, `version`, and `sha256` (from the release's `.sha256` file), then commit as `chore: homebrew X.Y.Z` ([0046](docs/decisions/0046-homebrew-binaries.md)).
+4. The same workflow's `homebrew` job points the formula in [maytech-labs/homebrew-tap](https://github.com/maytech-labs/homebrew-tap) at the new macOS archive ([0047](docs/decisions/0047-org-homebrew-tap.md)). If it fails, usually because `HOMEBREW_TAP_TOKEN` expired, update `url`, `version`, and `sha256` there by hand.
 
 ## Commits and pull requests
 

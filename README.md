@@ -28,11 +28,11 @@ The linter goes past syntax: ABI rules (callee-saved registers, x18, stack align
 
 Prebuilt binaries for macOS (Apple silicon) and Linux (x86_64 and arm64) are on the [releases page](https://github.com/maytech-labs/arm-tools/releases): unpack one and put `armls` and `armtool` on your `PATH`.
 
-With Homebrew, on Apple silicon:
+With Homebrew, on Apple silicon, from the [maytech-labs tap](https://github.com/maytech-labs/homebrew-tap):
 
 ```sh
-brew tap maytech-labs/arm-tools https://github.com/maytech-labs/arm-tools
-brew trust maytech-labs/arm-tools
+brew tap maytech-labs/tap
+brew trust maytech-labs/tap
 brew install arm-tools
 ```
 
