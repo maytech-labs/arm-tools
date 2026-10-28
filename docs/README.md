@@ -55,3 +55,4 @@
 - [0044 Releases: tagged builds with prebuilt binaries](decisions/0044-releases.md)
 - [0045 License under REAL 1.0](decisions/0045-real-license.md)
 - [0046 Homebrew installs the release binaries](decisions/0046-homebrew-binaries.md)
+- [0047 The formula lives in the maytech-labs tap, and releases bump it](decisions/0047-org-homebrew-tap.md)

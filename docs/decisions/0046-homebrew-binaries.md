@@ -1,6 +1,6 @@
 # 0046. Homebrew installs the release binaries
 
-- **Status:** Accepted
+- **Status:** Accepted; hand-edited bump superseded by [0047](0047-org-homebrew-tap.md)
 - **Date:** 2026-10-27
 - **Extends:** [0025](0025-distribution.md), [0044](0044-releases.md)
 

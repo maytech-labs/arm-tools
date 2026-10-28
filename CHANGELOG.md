@@ -7,6 +7,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ### Project
 
 - `brew install arm-tools` installs the release's prebuilt binaries, without building Rust or LLVM. `--HEAD` still builds `main`.
+- The Homebrew formula moved to the [maytech-labs tap](https://github.com/maytech-labs/homebrew-tap): `brew tap maytech-labs/tap`. Releases update it automatically.
 
 ## 0.1.0 - 2026-10-27
 
