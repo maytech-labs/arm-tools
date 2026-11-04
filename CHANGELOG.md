@@ -6,6 +6,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Project
 
+- Every source file starts with an `SPDX-License-Identifier` header: `LicenseRef-REAL-1.0`, or `Apache-2.0 WITH LLVM-exception` for `crates/isa/src/generated.rs`, which `gen-isa` now writes. `real-check repo .` passes clean.
 - The README's status says 0.1.1 instead of pre-release.
 - Releasing is pushing a tag: the release workflow sets the version, dates this changelog, and commits that to `main` before building ([0049](docs/decisions/0049-release-from-a-tag.md)).
 

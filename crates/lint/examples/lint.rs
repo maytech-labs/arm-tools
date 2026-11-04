@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Lints files with the default config: `cargo run -p arm-lint --example lint -- a.s`.
 
 use arm_sema::{Analysis, Encoding};

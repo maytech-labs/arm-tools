@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Typed views over the tree. Each type wraps a node of one kind. Accessors
 //! return `Option` because the tree can be incomplete while the user types.
 

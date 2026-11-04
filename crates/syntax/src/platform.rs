@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Which assembler conventions a file follows (docs/decisions/0038-linux.md).
 
 /// The platform a file is assembled for. Apple's assembler (Mach-O) and the

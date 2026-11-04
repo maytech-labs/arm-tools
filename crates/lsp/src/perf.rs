@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Timing on a large file: `ARMLS_PERF=big.s cargo test -p arm-lsp --release perf -- --nocapture`.
 
 use std::time::Instant;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The parser's contract: real programs parse without errors and round-trip,
 //! invalid lines are reported, and clang agrees with both
 //! (docs/decisions/0007-testing.md). Tree shapes are pinned by snapshots in

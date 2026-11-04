@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 // Starts armls for AArch64 assembly files. The extension is only glue: every
 // feature is in armls (docs/decisions/0025-distribution.md).
 import { ExtensionContext, window, workspace } from "vscode";

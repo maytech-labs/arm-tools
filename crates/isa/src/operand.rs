@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Clang's operand model (`AArch64Operand` in LLVM's AArch64AsmParser.cpp),
 //! which operand classes are checked against. `arm-sema` builds these from
 //! the syntax tree; the matcher checks them against each form.

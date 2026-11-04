@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! `cargo xtask survey`: checks that every line arm-sema reports an error on
 //! (syntax or semantic) is one clang rejects too (docs/decisions/0007-testing.md). Run it on large
 //! bodies of real assembly we don't check in, like LLVM's MC tests.

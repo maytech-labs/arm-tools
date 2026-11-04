@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 // Included by strlen.S through the C preprocessor.
 #define SYS_WRITE 4
 #define SYS_EXIT 1

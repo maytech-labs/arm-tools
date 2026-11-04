@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Tokens to a lossless tree (docs/decisions/0008-lossless-syntax-tree.md).
 //!
 //! The parser never fails. Input it can't make sense of goes into an `Error`

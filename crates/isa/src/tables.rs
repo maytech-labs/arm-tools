@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Row types for the tables in `generated.rs`.
 
 pub(crate) struct FeatureInfo {

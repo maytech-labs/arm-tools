@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Signatures from C: prototypes in the project's headers and sources, and
 //! common C library functions, turned into register signatures by the
 //! AAPCS64 rules (docs/decisions/0040-c-signatures.md).

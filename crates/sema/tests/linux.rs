@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! arm-sema on Linux files: ELF conventions, checked against
 //! `clang --target=aarch64-linux-gnu` (docs/decisions/0038-linux.md).
 

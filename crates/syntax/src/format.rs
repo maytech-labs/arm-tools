@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The formatter (docs/decisions/0020-formatter.md). It changes only
 //! whitespace: tokens are never added, removed, or joined, so formatting
 //! can't change what a file assembles to. Lines it can't safely judge (inside

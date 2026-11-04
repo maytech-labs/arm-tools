@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! `.S` files: run clang's C preprocessor, analyze its output, and map what
 //! we find back to the original lines (docs/decisions/0027-preprocessed-files.md).
 

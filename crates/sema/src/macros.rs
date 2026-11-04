@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Macro definitions, argument binding, and expansion, as clang does them
 //! (docs/decisions/0024-macro-expansion.md).
 

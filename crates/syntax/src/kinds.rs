@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Every kind of token and node in the tree, as one enum so rowan can store
 //! both (docs/decisions/0008-lossless-syntax-tree.md).
 

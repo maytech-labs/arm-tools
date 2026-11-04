@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Times a full parse of a file: `cargo run --release -p arm-syntax --example bench -- a.s`.
 
 use std::time::Instant;

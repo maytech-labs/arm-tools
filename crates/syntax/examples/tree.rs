@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Prints the tree for a file or for stdin: `cargo run -p arm-syntax --example tree -- a.s`.
 //! The platform is what the text gives away (`armtool: platform=linux`), else Darwin.
 

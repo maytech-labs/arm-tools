@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The lexer's contract on a real program: lossless and error-free on valid
 //! input. `parse.rs` checks with clang that the program is valid.
 

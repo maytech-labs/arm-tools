@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Finding included files on disk, preferring editor buffers that haven't
 //! been saved (docs/decisions/0019-includes.md).
 
