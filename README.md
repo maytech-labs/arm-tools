@@ -1,5 +1,7 @@
 # arm-tools
 
+[![License: REAL 1.0](https://img.shields.io/badge/License-REAL_1.0-blue.svg)](LICENSE.md)
+
 Tools for writing AArch64 assembly on macOS and Linux: a language server, a linter, and a formatter, built on one parser and one model of the instruction set.
 
 > **Status: 0.1.1.** Prebuilt binaries are on the [releases page](https://github.com/maytech-labs/arm-tools/releases). The language server and `armtool` give you errors as you type in clang's words, operand checking, 25 lint rules, optional types, and everything below. Docs: **[maytech-labs.github.io/arm-tools](https://maytech-labs.github.io/arm-tools/)**, built from [docs/](docs/introduction.md) with mdBook (`mdbook serve docs` to preview). See the [roadmap](docs/roadmap.md).
