@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Immediate encoding checks from LLVM's `AArch64AddressingModes.h`
 //! (`AArch64_AM::isLogicalImmediate` and friends), ported as written.
 

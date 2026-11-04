@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Matching an instruction's operands against its forms, the way clang's
 //! generated matcher does (docs/decisions/0017-operand-matching.md).
 //!

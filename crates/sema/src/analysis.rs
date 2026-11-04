@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The semantic model of one file: symbols, references to them, block
 //! structure, and the errors clang reports for them. Each check here was
 //! probed against clang; see docs/decisions/0015-sema-file-model.md.

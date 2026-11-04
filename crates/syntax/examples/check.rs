@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Prints syntax errors for each file given: `cargo run -p arm-syntax --example check -- a.s`.
 
 fn main() {

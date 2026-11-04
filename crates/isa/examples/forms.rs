@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Prints every form of a mnemonic with its operand classes and predicates:
 //! `cargo run -p arm-isa --example forms -- ldr`.
 

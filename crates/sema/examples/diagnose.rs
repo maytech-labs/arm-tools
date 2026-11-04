@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Prints diagnostics for a file or stdin, like a compiler:
 //! `cargo run -p arm-sema --example diagnose -- a.s`.
 

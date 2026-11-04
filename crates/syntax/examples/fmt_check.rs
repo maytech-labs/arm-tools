@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Checks the formatter's promises on any files: tokens unchanged and stable.
 //! `cargo run --release -p arm-syntax --example fmt_check -- dir/*.s`
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! CPU feature data for `gen-isa`, from `llvm-tblgen --dump-json` and clang's
 //! default target (docs/decisions/0022-cpu-features.md).
 

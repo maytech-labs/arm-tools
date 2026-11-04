@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Tokens for Apple AArch64 assembly.
 //!
 //! Every byte of the input is in exactly one token, so the tokens concatenate

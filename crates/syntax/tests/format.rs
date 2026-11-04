@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The formatter's promises on real code (docs/decisions/0020-formatter.md):
 //! it changes only whitespace, it's stable, and clang builds the same object.
 

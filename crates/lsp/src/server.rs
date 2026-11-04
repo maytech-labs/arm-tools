@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The protocol layer: LSP messages in, `ide` calls, LSP messages out
 //! (docs/decisions/0009-lsp-library.md). One thread, whole-file reanalysis on
 //! every change.

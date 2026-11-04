@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! LLVM's operand class predicates (`isImmInRange<0, 63>` and friends, the
 //! `is*` methods of `AArch64Operand` in AArch64AsmParser.cpp), ported to Rust.
 //!

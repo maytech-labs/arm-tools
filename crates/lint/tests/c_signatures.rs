@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Calls into the project's C functions are checked against their
 //! prototypes (docs/decisions/0040-c-signatures.md).
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! A file's call graph, for call hierarchy in editors: its functions, as
 //! the control-flow graph finds them, and the calls each one makes.
 

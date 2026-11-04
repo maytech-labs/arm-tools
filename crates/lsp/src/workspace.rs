@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! An index of the project's assembly files, for navigation between files
 //! that are assembled separately and linked together (docs/decisions/0029-workspace-index.md).
 //!

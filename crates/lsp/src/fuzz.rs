@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! A fuzzed edit session: the real server, in memory, takes thousands of
 //! random edits to real files and every request at random places after each
 //! one. It must answer them all and never panic (AGENTS.md rule 4).

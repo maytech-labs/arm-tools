@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Named operand values from LLVM's searchable tables in
 //! `AArch64SystemOperands.td`, and the condition code names from
 //! `AArch64AsmParser::parseCondCodeString`. LLVM looks names up ignoring

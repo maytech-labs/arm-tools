@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! LLVM register class membership (`AArch64MCRegisterClasses[...].contains`),
 //! from the class definitions in `AArch64RegisterInfo.td`.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! How clang splits an instruction name before matching it
 //! (`AArch64AsmParser::parseInstruction` in LLVM 21).
 

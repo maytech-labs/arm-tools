@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Which CPU features are on, as clang tracks them for `-arch arm64`,
 //! `.arch`, `.cpu`, and `.arch_extension` (docs/decisions/0022-cpu-features.md).
 

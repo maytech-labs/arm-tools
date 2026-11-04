@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Repo automation, run with `cargo xtask <task>`. Tasks are Rust so the repo
 //! needs nothing but Cargo (docs/decisions/0002-rust-and-cargo.md).
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The rules. Each finds problems clang accepts but that break at run time
 //! or under Apple's ABI. See docs/lint.md for each rule's page.
 

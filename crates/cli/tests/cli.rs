@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The `armtool` contract: commands, output, and exit codes, from the real
 //! binary on real files (docs/decisions/0007-testing.md).
 

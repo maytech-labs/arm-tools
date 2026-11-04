@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Editor features over one analyzed file, in byte offsets. The protocol
 //! layer in `server.rs` converts positions and types; everything here can be
 //! tested without LSP.
