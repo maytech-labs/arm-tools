@@ -2,7 +2,7 @@
 
 Tools for writing AArch64 assembly on macOS and Linux: a language server, a linter, and a formatter, built on one parser and one model of the instruction set.
 
-> **Status: 0.1.1.** The language server and `armtool` are released, with prebuilt binaries on the [releases page](https://github.com/maytech-labs/arm-tools/releases): errors as you type in clang's words, operand checking, 25 lint rules, optional types, and everything below. Docs: **[maytech-labs.github.io/arm-tools](https://maytech-labs.github.io/arm-tools/)**, built from [docs/](docs/introduction.md) with mdBook (`mdbook serve docs` to preview). See the [roadmap](docs/roadmap.md).
+> **Status: 0.1.1.** Prebuilt binaries are on the [releases page](https://github.com/maytech-labs/arm-tools/releases). The language server and `armtool` give you errors as you type in clang's words, operand checking, 25 lint rules, optional types, and everything below. Docs: **[maytech-labs.github.io/arm-tools](https://maytech-labs.github.io/arm-tools/)**, built from [docs/](docs/introduction.md) with mdBook (`mdbook serve docs` to preview). See the [roadmap](docs/roadmap.md).
 
 Apple silicon comes first. By default it targets the assembly Apple's toolchain accepts: `clang -c -arch arm64`, Mach-O, the Darwin ABI. That means `_`-prefixed symbols, `@PAGE` and `@PAGEOFF`, `;` comments, `%%` separators, and x18 reserved for the OS.
 
