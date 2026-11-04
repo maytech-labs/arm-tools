@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Byte offsets to lines and columns and back, in UTF-8 bytes or UTF-16 code
 //! units. LSP clients ask for one or the other (docs/design.md#language-server).
 

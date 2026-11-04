@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Checking one file the way both armls and armtool do: includes, `.S`
 //! preprocessing, semantic errors, and lint rules (docs/decisions/0027-preprocessed-files.md).
 

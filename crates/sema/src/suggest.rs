@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! "Did you mean" suggestions by edit distance.
 
 /// The closest candidate to `word`, if one is close enough to be a likely typo:

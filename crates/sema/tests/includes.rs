@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! `.include`: what's imported, cycles, missing files, and clang's agreement
 //! (docs/decisions/0019-includes.md).
 

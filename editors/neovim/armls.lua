@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: LicenseRef-REAL-1.0
 -- armls for Neovim 0.11 and later. Put this file in ~/.config/nvim/plugin/,
 -- or paste it into your config.
 vim.lsp.config("armls", {

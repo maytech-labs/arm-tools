@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! AArch64 instruction tables, generated from LLVM's assembler matcher
 //! (docs/decisions/0013-isa-from-llvm-tablegen.md,
 //! docs/decisions/0014-isa-from-asm-matcher.md).

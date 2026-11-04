@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! arm-sema's contract: what it defines, resolves, and reports, checked
 //! against clang where clang has an opinion (docs/decisions/0007-testing.md).
 

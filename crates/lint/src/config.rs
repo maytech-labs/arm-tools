@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! `armtool.toml`: per-project rule levels.
 //!
 //! ```toml

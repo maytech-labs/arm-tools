@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Lint rules for Apple AArch64 assembly (docs/decisions/0018-lint.md). Rules
 //! work from `arm_sema::Analysis`: its items, operands, and symbols. They run
 //! in `armls` as diagnostics and in `armtool lint` for CI.

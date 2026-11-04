@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Instructions clang handles in C++ before its match table
 //! (`AArch64AsmParser::MatchAndEmitInstruction` and `parseSysAlias` in LLVM
 //! 21), checked the same way (docs/decisions/0037-cpp-aliases.md).

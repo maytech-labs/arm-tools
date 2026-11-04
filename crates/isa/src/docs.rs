@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Text for people: readable instruction signatures, what each register is
 //! for on Darwin, and what common directives do. Written by us; Arm's openly
 //! licensed spec has no prose (docs/decisions/0013-isa-from-llvm-tablegen.md).

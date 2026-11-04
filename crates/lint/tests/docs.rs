@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! docs/lint.md has a section for every rule, with its current summary and
 //! default level, so the docs can't fall behind the rules.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Gradual types for assembly (docs/decisions/0039-types.md). Comments
 //! declare function signatures and register types:
 //!

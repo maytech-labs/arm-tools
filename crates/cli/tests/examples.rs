@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The programs in examples/ stay correct: the valid ones lint clean and
 //! build and run with clang, and mistakes.s keeps showing every problem it
 //! says it does.

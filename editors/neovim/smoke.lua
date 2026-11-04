@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: LicenseRef-REAL-1.0
 -- End-to-end check, run by `cargo xtask nvim-smoke`: start armls through
 -- Neovim's own LSP client, headless, and check what an editor user sees.
 local armls = assert(os.getenv("ARMLS"), "set ARMLS to the armls binary")

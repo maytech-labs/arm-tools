@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Turning an instruction's operands into clang's operand model, so the
 //! matcher in `arm-isa` can check them (docs/decisions/0017-operand-matching.md).
 

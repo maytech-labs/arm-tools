@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! `cargo xtask notices`: THIRD-PARTY-NOTICES.md, the licenses of every
 //! crate built into armls and armtool, which their licenses require with
 //! each copy of the binaries (docs/decisions/0045-real-license.md).

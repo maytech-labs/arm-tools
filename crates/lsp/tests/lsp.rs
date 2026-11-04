@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The `armls` contract: the real binary, driven over stdio the way an editor
 //! drives it (docs/decisions/0007-testing.md). Every request has a timeout, so
 //! a hung or crashed server fails the test instead of hanging it.

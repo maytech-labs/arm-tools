@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! What instructions do, in a sentence or two, for hover. Written by us, for
 //! the instructions people write by hand; the tables have none
 //! (docs/decisions/0036-instruction-descriptions.md).

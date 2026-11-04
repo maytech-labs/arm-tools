@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! The one diagnostic shape every layer produces (docs/design.md#architecture).
 //! `armls` turns these into LSP diagnostics; `armtool` prints them.
 

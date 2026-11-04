@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! Lexer and parser for AArch64 assembly, Apple's and Linux's. See docs/design.md#syntax.
 
 pub mod ast;

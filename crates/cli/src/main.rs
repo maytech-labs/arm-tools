@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-REAL-1.0
 //! `armtool`: check and lint AArch64 assembly from the command line and CI.
 //! Exit codes: 0 clean, 1 errors or warnings found, 2 usage or I/O problem.
 
