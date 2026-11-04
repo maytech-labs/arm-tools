@@ -6,6 +6,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Project
 
+- The README's status says 0.1.1 instead of pre-release.
 - Releasing is pushing a tag: the release workflow sets the version, dates this changelog, and commits that to `main` before building ([0049](docs/decisions/0049-release-from-a-tag.md)).
 
 ## 0.1.1 - 2026-10-28
